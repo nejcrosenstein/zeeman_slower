@@ -77,19 +77,6 @@ struct Vec3D
     return std::sqrt(norm_sq());
   }
 
-  std::optional<Vec3D> normalized() const
-  {
-    double norm_value = this->norm();
-
-    return norm_value == 0.0 ?
-      std::optional<Vec3D>() : (*this)/norm_value;
-  }
-
-  double projectionComponentAlongDirection(Vec3D<T> const& dir_norm) const
-  {
-    return
-      (x_*dir_norm.x_ + y_ * dir_norm.y_ + z_ * dir_norm.z_);
-  }
 };
 
 
@@ -164,90 +151,6 @@ struct Arr2D
   std::vector<double> data_;
 };
 
-//
-// Interpolation (with clamping)
-//
-
-
-namespace debug
-{
-  void print(__m256d vals)
-  {
-    double deb[4];
-    _mm256_storeu_pd(&deb[0], vals);
-    std::cout << deb[0] << "  " << deb[1] << "  " << deb[2] << "  " << deb[3] << std::endl;
-  }
-
-  void print(__m256i vals)
-  {
-    int64_t deb[4];
-    _mm256_storeu_si256((__m256i*)&deb[0], vals);
-    std::cout << deb[0] << "  " << deb[1] << "  " << deb[2] << "  " << deb[3] << std::endl;
-  }
-}
-
-
-__forceinline __m256d __vectorcall gatherHelper(Arr2D const& src, __m128i const& ix0_32, __m128i const& ix1_32, __m128i const& stride_32)
-{
-  __m256i ix0 = _mm256_cvtepi32_epi64(ix0_32);
-  __m256i ix1 = _mm256_cvtepi32_epi64(ix1_32);
-  __m256i stride = _mm256_cvtepi32_epi64(stride_32);
-
-  __m256i indices =
-    _mm256_add_epi64(ix1, _mm256_mul_epi32(ix0, stride));
-
-  return _mm256_i64gather_pd(&src.data_[0], ix1, sizeof(double));
-}
-
-__forceinline __m256d __vectorcall interpolate(
-  Arr2D const& arr, 
-  __m256d const& pos0, 
-  __m256d const& pos1)
-{
-  constexpr int rm = _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC;
-
-  __m256d pos0_lo = _mm256_round_pd(pos0, rm);
-  __m256d pos1_lo = _mm256_round_pd(pos1, rm);
-
-  // Interpolation weights
-  __m256d one = _mm256_set1_pd(1.0);
-  __m256d w0_lo = _mm256_sub_pd(pos0, pos0_lo);
-  __m256d w0_hi = _mm256_sub_pd(one, w0_lo);
-
-  __m256d w1_lo = _mm256_sub_pd(pos1, pos1_lo);
-  __m256d w1_hi = _mm256_sub_pd(one, w1_lo);
-
-  // Interpolation indices
-  __m128i ix0_lo = _mm256_cvtpd_epi32(pos0_lo);
-  __m128i ix1_lo = _mm256_cvtpd_epi32(pos1_lo);
-
-  __m128i ione = _mm_set1_epi32(1);
-  __m128i ix0_hi = _mm_add_epi32(ix0_lo, ione);
-  __m128i ix1_hi = _mm_add_epi32(ix1_lo, ione);
-
-  // Clamping
-  __m128i izero = _mm_setzero_si128();
-  __m128i hi0 = _mm_set1_epi32(arr.size0_ - 1);
-  __m128i hi1 = _mm_set1_epi32(arr.size1_ - 1);
-
-  __m128i cl0_lo = _mm_min_epi32(_mm_max_epi32(ix0_lo, izero), hi0);
-  __m128i cl0_hi = _mm_min_epi32(_mm_max_epi32(ix0_hi, izero), hi0);
-  __m128i cl1_lo = _mm_min_epi32(_mm_max_epi32(ix1_lo, izero), hi1);
-  __m128i cl1_hi = _mm_min_epi32(_mm_max_epi32(ix1_hi, izero), hi1);
-
-  __m128i strides = _mm_set1_epi32(arr.size1_);
-  __m256d v00 = gatherHelper(arr, cl0_lo, cl1_lo, strides);
-  __m256d v01 = gatherHelper(arr, cl0_lo, cl1_hi, strides);
-  __m256d v10 = gatherHelper(arr, cl0_hi, cl1_lo, strides);
-  __m256d v11 = gatherHelper(arr, cl0_hi, cl1_hi, strides);
-
-  __m256d mul00 = _mm256_mul_pd(w0_lo, _mm256_mul_pd(w1_lo, v00));
-  __m256d mul01 = _mm256_mul_pd(w0_lo, _mm256_mul_pd(w1_hi, v01));
-  __m256d mul10 = _mm256_mul_pd(w0_hi, _mm256_mul_pd(w1_lo, v10));
-  __m256d mul11 = _mm256_mul_pd(w0_hi, _mm256_mul_pd(w1_hi, v11));
-
-  return _mm256_add_pd(_mm256_add_pd(mul00, mul01), _mm256_add_pd(mul10, mul11));
-}
 
 
 #endif // MATHS_HPP

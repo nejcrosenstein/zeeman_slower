@@ -16,11 +16,6 @@ __forceinline double beamWaist(double posOnAxis)
   return waist_at_oven_exit + (posOnAxis - oven_exit_pos_z)* beam_spread_angle_rad_;
 }
 
-__forceinline Vec3D<double> beamDirection(Vec3D<double> const& pos)
-{
-  return Vec3D<double>(-pos.x_, -pos.y_, focus_point_z - pos.z_).normalized().value_or(Vec3D<double>(0));
-}
-
 
 
 

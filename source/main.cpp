@@ -54,7 +54,6 @@ __forceinline void __vectorcall computeLightDirection(
   for (int i = 0; i < 3; ++i)
     squared[i] = _mm256_mul_pd(dirs[i], dirs[i]);
 
-
   __m256d squared_components_sum =
     _mm256_add_pd(squared[0], _mm256_add_pd(squared[1], squared[2]));
 
@@ -93,29 +92,27 @@ static void singlePhotonScatter(
   ZeemanSlower const& slower,
   ImportedField const& quadrupole)
 { 
-  __m256d intensity = _mm256_set1_pd(11.0);
-  __m256d detuning = _mm256_set1_pd(-50.0e6);
+  // Current position and velocity
+  __m256d curr_pos_x = _mm256_load_pd(atoms.pos_x);
+  __m256d curr_pos_y = _mm256_load_pd(atoms.pos_y);
+  __m256d curr_pos_z = _mm256_load_pd(atoms.pos_z);
+  
+  __m256d curr_vel_x = _mm256_load_pd(atoms.vel_x);
+  __m256d curr_vel_y = _mm256_load_pd(atoms.vel_y);
+  __m256d curr_vel_z = _mm256_load_pd(atoms.vel_z);
 
-  __m256d z_positions = _mm256_load_pd(&atoms.pos_z[0]);
+
+  // TODO: intensity is position-dependent!
+  __m256d intensity = _mm256_set1_pd(4.0);
+  // TODO: make a parameter
+  __m256d detuning = _mm256_set1_pd(-50.0e6);
 
   __m256d r_positions = _mm256_setzero_pd();
 
-  __m256d slower_z =
-    _mm256_mul_pd(
-      _mm256_set1_pd(slower.step_z_inv_),
-      _mm256_sub_pd(z_positions, _mm256_set1_pd(slower.start_z_)));
-
-  __m256d slower_fields = interpolate(slower.magnetic_fields_tesla_, r_positions, slower_z);
-
-  __m256d quad_z =
-    _mm256_mul_pd(
-      _mm256_set1_pd(quadrupole.step_z_inv_),
-      _mm256_sub_pd(z_positions, _mm256_set1_pd(quadrupole.start_z_)));
-  
-  __m256d quad_fields = interpolate(quadrupole.magnetic_fields_tesla_, r_positions, quad_z);
-
+  // TODO: combine both fields before simulation starts
+  __m256d slower_fields = interpolate(slower, r_positions, curr_pos_z);
+  __m256d quad_fields = interpolate(quadrupole, r_positions, curr_pos_z);
   __m256d field_tesla = _mm256_add_pd(slower_fields, quad_fields);
-
 
   __m256d light_dir[3];
   computeLightDirection(atoms, light_dir[0], light_dir[1], light_dir[2]);
@@ -127,13 +124,7 @@ static void singlePhotonScatter(
 
   __m256d time_step = _mm256_set1_pd(0.2 * excited_state_lifetime);
 
-  __m256d curr_vel_x = _mm256_load_pd(&atoms.vel_x[0]);
-  __m256d curr_vel_y = _mm256_load_pd(&atoms.vel_y[0]);
-  __m256d curr_vel_z = _mm256_load_pd(&atoms.vel_z[0]);
 
-  __m256d curr_pos_x = _mm256_load_pd(&atoms.pos_x[0]);
-  __m256d curr_pos_y = _mm256_load_pd(&atoms.pos_y[0]);
-  __m256d curr_pos_z = _mm256_load_pd(&atoms.pos_z[0]);
 
   __m256d step_x = _mm256_mul_pd(curr_vel_x, time_step);
   __m256d step_y = _mm256_mul_pd(curr_vel_y, time_step);
