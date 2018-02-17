@@ -75,6 +75,7 @@ __forceinline double zeemanEffect(double magField)
 __forceinline __m256d __vectorcall excitedStateProbabilites(__m256d const& intensities, __m256d const& detunings)
 {
   __m256d s = _mm256_mul_pd(intensities, _mm256_set1_pd(saturation_intensity_inv));
+  __m256d num = _mm256_mul_pd(_mm256_set1_pd(0.5), s);
 
   __m256d twice_lifetime = _mm256_set1_pd(2.0*excited_state_lifetime);
   __m256d prod = _mm256_mul_pd(twice_lifetime, detunings);
@@ -83,7 +84,7 @@ __forceinline __m256d __vectorcall excitedStateProbabilites(__m256d const& inten
 
   __m256d den = _mm256_add_pd(prod_sq_plus_s, _mm256_set1_pd(1.0));
 
-  return _mm256_div_pd(s, den);
+  return _mm256_div_pd(num, den);
 }
 
 __forceinline double excitedStateProbability(double light_intensity, double light_detuning_hz)
