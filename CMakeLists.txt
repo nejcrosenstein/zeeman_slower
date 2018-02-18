@@ -6,6 +6,7 @@ add_compile_options("/std:c++latest")
 set(CPP_FILES ${PROJECT_SOURCE_DIR}/source/main.cpp)
 
 set(HEADER_FILES 
+    ${PROJECT_SOURCE_DIR}/externals/randgen/xoroshiro128plus.hpp 
     ${PROJECT_SOURCE_DIR}/source/mathtools.hpp 
     ${PROJECT_SOURCE_DIR}/source/physics.hpp
     ${PROJECT_SOURCE_DIR}/source/coils.hpp
