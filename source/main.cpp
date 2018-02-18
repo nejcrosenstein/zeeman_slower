@@ -101,11 +101,9 @@ static void singlePhotonScatter(
   __m256d curr_vel_y = _mm256_load_pd(atoms.vel_y);
   __m256d curr_vel_z = _mm256_load_pd(atoms.vel_z);
 
-
-  // TODO: intensity is position-dependent!
-  __m256d intensity = _mm256_set1_pd(4.0);
+  __m256d intensity = lightIntensity(curr_pos_x, curr_pos_y, curr_pos_z);
   // TODO: make a parameter
-  __m256d detuning = _mm256_set1_pd(-50.0e6);
+  __m256d detuning = _mm256_set1_pd(10.0e6);
 
   __m256d r_positions = _mm256_setzero_pd();
 
