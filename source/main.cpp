@@ -7,13 +7,14 @@
 #include "physics.hpp"
 #include "coils.hpp"
 #include "beam.hpp"
-#include "xorshift.hpp"
 #include "histogram.hpp"
 #include "laser.hpp"
 
+#include "../externals/randgen/xoroshiro128plus.hpp"
+
 using Uniform = std::uniform_real_distribution<double>;
 using Exponential = std::exponential_distribution<double>;
-using RandomGenerator = XorshiftStar;
+using RandomGenerator = Xoroshiro;
 
 using Vecd = Vec3D<double>;
 
@@ -280,9 +281,14 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
 
 void simulation()
 {
-  RandomGenerator random_gen(2); // TODO seed
+  std::random_device rd;
+  std::uniform_int_distribution<uint64_t> dist;
+  uint64_t seed[2];
+  seed[0] = dist(rd);
+  seed[1] = dist(rd);
+  RandomGenerator random_gen(seed); // TODO seed
 
-  ZeemanSlower slower(2.6, 1.3, -0.3, 1.0, 1000);
+  ZeemanSlower slower(2.6, 1.3, -0.3, 1.0, 2000);
   ImportedField quadrupole(0.74, "quadrupole.txt");
   BeamVelocityDistribution init_velocity_dist(353.0);
 
