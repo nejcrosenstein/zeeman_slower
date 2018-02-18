@@ -70,9 +70,9 @@ struct ZeemanSlower : public MagneticField1D
     this->step_z_ = (end_z - start_z) / double(num_points);
     this->step_z_inv_ = 1.0 / step_z_;
 
-    for (int i = 0; i < num_points; ++i)
+    for (int j = 0; j < num_points; ++j)
     {
-      double z = start_z_ + step_z_ * double(i);
+      double z = start_z_ + step_z_ * double(j);
 
       double total_field = 0.0;
       double inner_rad = tube_radius_;
@@ -88,7 +88,7 @@ struct ZeemanSlower : public MagneticField1D
         inner_rad += winds * wire_thickness_;
       }
 
-      magnetic_fields_tesla_(0, i) = total_field;
+      magnetic_fields_tesla_(0, j) = total_field;
     }
   }
 };
@@ -167,7 +167,7 @@ __forceinline __m256d __vectorcall gatherHelper(Arr2D const& src, __m128i const&
   __m256i indices =
     _mm256_add_epi64(ix1, _mm256_mul_epi32(ix0, stride));
 
-  return _mm256_i64gather_pd(&src.data_[0], ix1, sizeof(double));
+  return _mm256_i64gather_pd(&src.data_[0], indices, sizeof(double));
 }
 
 __forceinline __m256d __vectorcall interpolate(
@@ -182,11 +182,11 @@ __forceinline __m256d __vectorcall interpolate(
 
   // Interpolation weights
   __m256d one = _mm256_set1_pd(1.0);
-  __m256d w0_lo = _mm256_sub_pd(pos0, pos0_lo);
-  __m256d w0_hi = _mm256_sub_pd(one, w0_lo);
+  __m256d w0_hi = _mm256_sub_pd(pos0, pos0_lo);
+  __m256d w0_lo = _mm256_sub_pd(one, w0_hi);
 
-  __m256d w1_lo = _mm256_sub_pd(pos1, pos1_lo);
-  __m256d w1_hi = _mm256_sub_pd(one, w1_lo);
+  __m256d w1_hi = _mm256_sub_pd(pos1, pos1_lo);
+  __m256d w1_lo = _mm256_sub_pd(one, w1_hi);
 
   // Interpolation indices
   __m128i ix0_lo = _mm256_cvtpd_epi32(pos0_lo);
