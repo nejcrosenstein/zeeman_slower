@@ -46,20 +46,31 @@ __forceinline __m256d __vectorcall lightIntensity(
 
   __m256d waist = beamWaist(pos_z);
 
-  alignas(32) double r[4];
-  _mm256_store_pd(r, rad_sq);
+  __m256d waist_sq_inv = 
+    _mm256_div_pd(
+      _mm256_set1_pd(1.0),
+      _mm256_mul_pd(waist, waist));
 
-  alignas(32) double w[4];
-  _mm256_store_pd(w, waist);
+  __m256d peak_intensity =
+    _mm256_mul_pd(
+      _mm256_set1_pd(2.0*laser_power_watt/pi),
+      waist_sq_inv);
+
+  __m256d twice_ratio_squared =
+    _mm256_mul_pd(
+      _mm256_set1_pd(2.0),
+      _mm256_mul_pd(rad_sq, waist_sq_inv));
+
+  alignas(32) double trsq[4];
+  _mm256_store_pd(trsq, twice_ratio_squared);
   
+  alignas(32) double exped[4];
   for (int i = 0; i < 4; ++i)
   {
-    double peakIntensity = 2 * laser_power_watt / (pi * sq(w[i]));
-
-    w[i] = exp(-2 * r[i] / sq(w[i])) * peakIntensity;
+    exped[i] = exp(-trsq[i]);
   }
 
-  return _mm256_load_pd(w);
+  return _mm256_mul_pd(_mm256_load_pd(exped), peak_intensity);
 }
 
 double lightIntensity(Vec3D<double> pos)
