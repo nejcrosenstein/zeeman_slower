@@ -2,6 +2,7 @@
 #include <random>
 #include <fstream>
 #include <array>
+#include <thread>
 
 #include "mathtools.hpp"
 #include "physics.hpp"
@@ -276,31 +277,19 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
   }
 }
 
-
-
-
-void simulation()
+// just pass everything by copy
+void simulationSingleThreaded(RandomGenerator rand_gen, ZeemanSlower slower, ImportedField quadrupole, Histogram* dst)
 {
-  std::random_device rd;
-  std::uniform_int_distribution<uint64_t> dist;
-  uint64_t seed[2];
-  seed[0] = dist(rd);
-  seed[1] = dist(rd);
-  RandomGenerator random_gen(seed); // TODO seed
-
-  ZeemanSlower slower(2.6, 1.3, -0.3, 1.0, 2000);
-  ImportedField quadrupole(0.74, "quadrupole.txt");
   BeamVelocityDistribution init_velocity_dist(353.0);
+  InitialStates init_states(init_velocity_dist, 200, rand_gen);
 
-  InitialStates init_states(init_velocity_dist, 800, random_gen);
-
-  Histogram hist(-50.0, 2.0, 200, -0.2, 0.001, 1000);
+  Histogram hist(-50.0, 1.0, 350, -0.2, 0.001, 1000);
 
   std::array<Histogram, 4> hists = { hist, hist, hist, hist };
 
-  for (int j = 0; j < 200; ++j)
+  for (int j = 0; j < 40; ++j)
   {
-    simulateQuadruplePath(random_gen, slower, quadrupole, init_states, hists);
+    simulateQuadruplePath(rand_gen, slower, quadrupole, init_states, hists);
 
     for (auto const& h : hists)
       for (int i = 0; i < h.histogram_.size(); ++i)
@@ -309,17 +298,70 @@ void simulation()
     std::cout << " iteration  " << j << std::endl;
   }
 
+  *dst = hist;
+}
+
+void joinAndClearThreads(std::vector<std::thread>& threads)
+{
+  for (auto& thread : threads)
+  {
+    thread.join();
+  }
+  threads.clear();
+}
+
+void simulation(ptrdiff_t number_of_threads)
+{
+  std::random_device rd;
+  std::uniform_int_distribution<uint64_t> dist;
+  uint64_t seed[2];
+  seed[0] = dist(rd);
+  seed[1] = dist(rd);
+  RandomGenerator random_gen(seed); 
+
+  std::vector<RandomGenerator> generators;
+  for(size_t idx = 0; idx < number_of_threads; ++idx)
+  {
+    auto& gen = generators.emplace_back(random_gen);
+    
+    for (size_t i = 0; i < idx; ++i)
+    {
+      gen.jump();
+    }
+  }
+
+  ZeemanSlower slower(2.6, 1.3, -0.3, 1.0, 2000);
+  ImportedField quadrupole(0.74, "quadrupole.txt");
+  
+  std::vector<Histogram> hists(number_of_threads);
+  std::vector<std::thread> threads;
+  for (size_t i = 0; i < number_of_threads; ++i)
+  {
+    threads.emplace_back(std::thread(simulationSingleThreaded, generators[i], slower, quadrupole, &hists[i]));
+  }
+
+  joinAndClearThreads(threads);
+
   std::ofstream out;
   out.open("out.txt");
 
   std::cout << "here";
 
-  int ix = 0;
-  for (int i = 0; i < hist.bins_vel_.number_of_bins_; ++i)
+  size_t size_vel = hists[0].bins_vel_.number_of_bins_;
+  size_t size_pos = hists[0].bins_pos_.number_of_bins_;
+
+  size_t ix = 0;
+  for (size_t k = 0; k < size_vel; ++k)
   {
-    for (int j = 0; j < hist.bins_pos_.number_of_bins_; ++j)
+    for (size_t j = 0; j < size_pos; ++j)
     {
-      out << hist.histogram_[ix++] << ",";
+      size_t bin_sum = 0;
+      for (auto& h : hists)
+        bin_sum += h.histogram_[ix];
+      
+      out << bin_sum << ",";
+
+      ++ix;
     }
     out << std::endl;
   }
@@ -333,7 +375,7 @@ int main(int argc, char* argv[])
 
   uint32_t number_of_particles_ = 10000;
 
-  simulation();
+  simulation(4);
 
   std::cout << "ended" << std::endl;
   

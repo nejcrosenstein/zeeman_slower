@@ -6,6 +6,7 @@
 
 struct Histogram
 {
+  Histogram(){}
 
   Histogram(double vel_lowest, double vel_binwidth, int vel_nbins,
     double pos_lowest, double pos_binwidth, int pos_nbins) :
