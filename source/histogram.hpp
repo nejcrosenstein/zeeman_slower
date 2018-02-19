@@ -19,13 +19,17 @@ struct Histogram
 
   void addSample(double sample_pos, double sample_vel)
   {
-    auto pos_idx = bins_pos_.binIndex(sample_pos);
+    auto pos_and_vel_idx = std::make_pair(
+      bins_pos_.binIndex(sample_pos),
+      bins_vel_.binIndex(sample_vel));
 
-    if (pos_idx != current_pos_bin_)
+    if (!current_pos_and_vel_bin_ || 
+        *current_pos_and_vel_bin_ != pos_and_vel_idx)
     {
-      current_pos_bin_ = pos_idx;
+      current_pos_and_vel_bin_ = pos_and_vel_idx;
 
-      auto vel_idx = bins_vel_.binIndex(sample_vel);
+      int pos_idx = pos_and_vel_idx.first;
+      int vel_idx = pos_and_vel_idx.second;
 
       if (pos_idx >= 0 && pos_idx < bins_pos_.number_of_bins_ &&
           vel_idx >= 0 && vel_idx < bins_vel_.number_of_bins_)
@@ -50,7 +54,8 @@ struct Histogram
 
   Bins bins_vel_;
   Bins bins_pos_;
-  int current_pos_bin_ = -1;
+  std::optional<std::pair<int, int>> current_pos_and_vel_bin_;
+  std::optional<int> current_vel_bin_;
   std::vector<int> histogram_;
 };
 
