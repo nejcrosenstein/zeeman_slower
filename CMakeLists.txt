@@ -12,7 +12,6 @@ set(HEADER_FILES
     ${PROJECT_SOURCE_DIR}/source/coils.hpp
     ${PROJECT_SOURCE_DIR}/source/laser.hpp
     ${PROJECT_SOURCE_DIR}/source/beam.hpp
-    ${PROJECT_SOURCE_DIR}/source/histogram.hpp
-    ${PROJECT_SOURCE_DIR}/source/xorshift.hpp)
+    ${PROJECT_SOURCE_DIR}/source/histogram.hpp)
 
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${HEADER_FILES})
