@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(ZeemanSlower)
 
 add_compile_options("/std:c++latest")
+add_compile_options("/arch:AVX2")
 
 set(CPP_FILES ${PROJECT_SOURCE_DIR}/source/main.cpp)
 
