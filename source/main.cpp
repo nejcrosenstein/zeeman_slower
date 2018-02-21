@@ -15,35 +15,77 @@
 
 using Uniform = std::uniform_real_distribution<double>;
 using Exponential = std::exponential_distribution<double>;
-using RandomGenerator = Xoroshiro;
+using RandomGenerator = XoroshiroSIMD;
 
 using Vecd = Vec3D<double>;
 
 static constexpr double oven_exit_radius_m = 0.003;
 
-struct ParticleQuadruple
+enum Directions
 {
-  alignas(32) double pos_x[4];
-  alignas(32) double pos_y[4];
-  alignas(32) double pos_z[4];
-
-  alignas(32) double vel_x[4];
-  alignas(32) double vel_y[4];
-  alignas(32) double vel_z[4];
+  X = 0,
+  Y = 1,
+  Z = 2,
+  NDir = 3
 };
 
-__forceinline void __vectorcall computeLightDirection(
-  ParticleQuadruple const& atoms,
-  __m256d& dir_x,
-  __m256d& dir_y,
-  __m256d& dir_z)
-{
-  // position (packed representation)
-  __m256d pos[3];
-  pos[0] = _mm256_load_pd(&atoms.pos_x[0]);
-  pos[1] = _mm256_load_pd(&atoms.pos_y[0]);
-  pos[2] = _mm256_load_pd(&atoms.pos_z[0]);
 
+struct ParticleQuadruple
+{
+  alignas(32) double pos_x[NDir];
+  alignas(32) double pos_y[NDir];
+  alignas(32) double pos_z[NDir];
+
+  alignas(32) double vel_x[NDir];
+  alignas(32) double vel_y[NDir];
+  alignas(32) double vel_z[NDir];
+
+  void getPositions(__m256d (&pos)[3]) const
+  {
+    pos[X] = _mm256_load_pd(pos_x);
+    pos[Y] = _mm256_load_pd(pos_y);
+    pos[Z] = _mm256_load_pd(pos_z);
+  }
+
+  void setPositions(__m256d const (&pos)[3])
+  {
+    _mm256_store_pd(pos_x, pos[X]);
+    _mm256_store_pd(pos_y, pos[Y]);
+    _mm256_store_pd(pos_z, pos[Z]);
+  }
+
+  void getVelocities(__m256d (&vel)[3]) const
+  {
+    vel[X] = _mm256_load_pd(vel_x);
+    vel[Y] = _mm256_load_pd(vel_y);
+    vel[Z] = _mm256_load_pd(vel_z);
+  }
+
+  void setVelocities(__m256d const (&vel)[3])
+  {
+    _mm256_store_pd(vel_x, vel[X]);
+    _mm256_store_pd(vel_y, vel[Y]);
+    _mm256_store_pd(vel_z, vel[Z]);
+  }
+};
+
+__forceinline __m256d __vectorcall dotProduct(
+  const __m256d(&a)[3],
+  const __m256d(&b)[3])
+{
+  // Some micro optimization is possible (fmadd), but
+  // the effect will probably not be noticeable
+  __m256d prod0 = _mm256_mul_pd(a[0], b[0]);
+  __m256d prod1 = _mm256_mul_pd(a[1], b[1]);
+  __m256d prod2 = _mm256_mul_pd(a[2], b[2]);
+
+  return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
+}
+
+__forceinline void __vectorcall computeLightDirection(
+  const __m256d (&pos)[3],
+  __m256d (&dir)[3])
+{
   // focus point
   __m256d foc[3]; 
   foc[0] = _mm256_setzero_pd();
@@ -54,39 +96,15 @@ __forceinline void __vectorcall computeLightDirection(
   for (int i = 0; i < 3; ++i)
     dirs[i] = _mm256_sub_pd(foc[i], pos[i]);
 
-  __m256d squared[3];
-  for (int i = 0; i < 3; ++i)
-    squared[i] = _mm256_mul_pd(dirs[i], dirs[i]);
+  __m256d norm_squared = dotProduct(dirs, dirs);
 
-  __m256d squared_components_sum =
-    _mm256_add_pd(squared[0], _mm256_add_pd(squared[1], squared[2]));
-
-  __m256d norm = _mm256_sqrt_pd(squared_components_sum);
+  __m256d norm = _mm256_sqrt_pd(norm_squared);
+  
   __m256d norm_inv = _mm256_div_pd(_mm256_set1_pd(1.0), norm);
 
-  dir_x = _mm256_mul_pd(dirs[0], norm_inv);
-  dir_y = _mm256_mul_pd(dirs[1], norm_inv);
-  dir_z = _mm256_mul_pd(dirs[2], norm_inv);
-}
-
-__forceinline __m256d __vectorcall projectVelocityToLightDir(
-  ParticleQuadruple const& atoms,
-  __m256d const& dir_x,
-  __m256d const& dir_y,
-  __m256d const& dir_z)
-{
-  // velocity components (packed representation)
-  __m256d vel[3];
-  vel[0] = _mm256_load_pd(&atoms.vel_x[0]);
-  vel[1] = _mm256_load_pd(&atoms.vel_y[0]);
-  vel[2] = _mm256_load_pd(&atoms.vel_z[0]);
-
-  // scalar product
-  __m256d prod0 = _mm256_mul_pd(vel[0], dir_x);
-  __m256d prod1 = _mm256_mul_pd(vel[1], dir_y);
-  __m256d prod2 = _mm256_mul_pd(vel[2], dir_z);
-
-  return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
+  dir[0] = _mm256_mul_pd(dirs[0], norm_inv);
+  dir[1] = _mm256_mul_pd(dirs[1], norm_inv);
+  dir[2] = _mm256_mul_pd(dirs[2], norm_inv);
 }
 
 template<class RandomGen_t>
@@ -97,83 +115,89 @@ static void singlePhotonScatter(
   ImportedField const& quadrupole)
 { 
   // Current position and velocity
-  __m256d curr_pos_x = _mm256_load_pd(atoms.pos_x);
-  __m256d curr_pos_y = _mm256_load_pd(atoms.pos_y);
-  __m256d curr_pos_z = _mm256_load_pd(atoms.pos_z);
+  __m256d curr_pos[NDir];
+  atoms.getPositions(curr_pos);
   
-  __m256d curr_vel_x = _mm256_load_pd(atoms.vel_x);
-  __m256d curr_vel_y = _mm256_load_pd(atoms.vel_y);
-  __m256d curr_vel_z = _mm256_load_pd(atoms.vel_z);
+  __m256d curr_vel[NDir];
+  atoms.getVelocities(curr_vel);
 
-  __m256d intensity = lightIntensity(curr_pos_x, curr_pos_y, curr_pos_z);
+  __m256d intensity = lightIntensity(curr_pos[X], curr_pos[Y], curr_pos[Z]);
   // TODO: make a parameter
   __m256d detuning = _mm256_set1_pd(10.0e6);
 
   __m256d r_positions = _mm256_setzero_pd();
 
   // TODO: combine both fields before simulation starts
-  __m256d slower_fields = interpolate(slower, r_positions, curr_pos_z);
-  __m256d quad_fields = interpolate(quadrupole, r_positions, curr_pos_z);
+  __m256d slower_fields = interpolate(slower, r_positions, curr_pos[Z]);
+  __m256d quad_fields = interpolate(quadrupole, r_positions, curr_pos[Z]);
   __m256d field_tesla = _mm256_add_pd(slower_fields, quad_fields);
+ 
+  __m256d light_dir[NDir];
+  computeLightDirection(curr_pos, light_dir);
 
-  __m256d light_dir[3];
-  computeLightDirection(atoms, light_dir[0], light_dir[1], light_dir[2]);
-
-  __m256d vel_along_light_dir = projectVelocityToLightDir(
-                                 atoms, light_dir[0], light_dir[1], light_dir[2]);
+  __m256d vel_along_light_dir = dotProduct(curr_vel, light_dir);
   
   __m256d scatter_rates = scatteringRate(vel_along_light_dir, intensity, detuning, field_tesla);
 
   __m256d time_step = _mm256_set1_pd(0.2 * excited_state_lifetime);
 
 
+  __m256d new_pos[NDir];
+  new_pos[X] = _mm256_fmadd_pd(curr_vel[X], time_step, curr_pos[X]);
+  new_pos[Y] = _mm256_fmadd_pd(curr_vel[Y], time_step, curr_pos[Y]);
+  new_pos[Z] = _mm256_fmadd_pd(curr_vel[Z], time_step, curr_pos[Z]);
 
-  __m256d step_x = _mm256_mul_pd(curr_vel_x, time_step);
-  __m256d step_y = _mm256_mul_pd(curr_vel_y, time_step);
-  __m256d step_z = _mm256_mul_pd(curr_vel_z, time_step);
+  atoms.setPositions(new_pos);
 
-  _mm256_store_pd(&atoms.pos_x[0], _mm256_add_pd(curr_pos_x, step_x));
-  _mm256_store_pd(&atoms.pos_y[0], _mm256_add_pd(curr_pos_y, step_y));
-  _mm256_store_pd(&atoms.pos_z[0], _mm256_add_pd(curr_pos_z, step_z));
+  __m256d probs = _mm256_mul_pd(scatter_rates, time_step);
 
-  __m256d probabilites = _mm256_mul_pd(scatter_rates, time_step);
+  __m256d uniform = rand_gen.random_simd();
+  __m256d compared = _mm256_cmp_pd(uniform, probs, _CMP_LE_OQ);
 
-  alignas(32) double probs[4];
-  _mm256_store_pd(&probs[0], probabilites);
+  int mmask = _mm256_movemask_pd(compared);
 
-  double vel_change_mags[4] = { 0, 0, 0, 0 };
-  double emm_dir_x[4] = { 0, 0, 0, 0 };
-  double emm_dir_y[4] = { 0, 0, 0, 0 };
-  double emm_dir_z[4] = { 0, 0, 0, 0 };
-  for (int i = 0; i < 4; ++i)
-  {
-    bool scatter_occurs = rand_gen.random(0.0, 1.0) < probs[i];
-    if (scatter_occurs)
-    {
-      auto phi = rand_gen.random(0.0, two_pi);
-      auto cos_theta = rand_gen.random(-1.0, 1.0);
-
-      emm_dir_x[i] = cos(phi)*sqrt(1.0 - sq(cos_theta));
-      emm_dir_y[i] = sin(phi)*sqrt(1.0 - sq(cos_theta));
-      emm_dir_z[i] = cos_theta;
-
-      vel_change_mags[i] = recoil_velocity; // else remains 0
-    }
-  }
-
-  __m256d change_x = _mm256_add_pd(light_dir[0], _mm256_load_pd(emm_dir_x));
-  __m256d change_y = _mm256_add_pd(light_dir[1], _mm256_load_pd(emm_dir_y));
-  __m256d change_z = _mm256_add_pd(light_dir[2], _mm256_load_pd(emm_dir_z));
-
-  __m256d vel_recoil = _mm256_load_pd(&vel_change_mags[0]);
+  if(mmask)
+  { 
+    // TODO: could probably do some cleanup below
+    double vel_change_mags[4] = { 0, 0, 0, 0 };
+    double emm_dir_x[4] = { 0, 0, 0, 0 };
+    double emm_dir_y[4] = { 0, 0, 0, 0 };
+    double emm_dir_z[4] = { 0, 0, 0, 0 };
     
-  __m256d new_vel_x = _mm256_add_pd(curr_vel_x, _mm256_mul_pd(change_x, vel_recoil));
-  __m256d new_vel_y = _mm256_add_pd(curr_vel_y, _mm256_mul_pd(change_y, vel_recoil));
-  __m256d new_vel_z = _mm256_add_pd(curr_vel_z, _mm256_mul_pd(change_z, vel_recoil));
+    double phi[4];
+    double ctheta[4];
+    __m256d vecphi = rand_gen.random_simd(0.0, two_pi);
+    __m256d vecctheta = rand_gen.random_simd(-1.0, 1.0);
+    _mm256_store_pd(phi, vecphi);
+    _mm256_store_pd(ctheta, vecctheta);
 
-  _mm256_store_pd(&atoms.vel_x[0], new_vel_x);
-  _mm256_store_pd(&atoms.vel_y[0], new_vel_y);
-  _mm256_store_pd(&atoms.vel_z[0], new_vel_z);
+    for (int i = 0; i < 4; ++i)
+    {
+      bool scatter_occurs = (mmask & (1 << i));
+      if (scatter_occurs)
+      {
+        emm_dir_x[i] = cos(phi[i])*sqrt(1.0 - sq(ctheta[i]));
+        emm_dir_y[i] = sin(phi[i])*sqrt(1.0 - sq(ctheta[i]));
+        emm_dir_z[i] = ctheta[i];
+
+        vel_change_mags[i] = recoil_velocity; // else remains 0
+      }
+    }
+
+    __m256d change_dir[NDir];
+    change_dir[X] = _mm256_sub_pd(light_dir[X], _mm256_load_pd(emm_dir_x));
+    change_dir[Y] = _mm256_sub_pd(light_dir[Y], _mm256_load_pd(emm_dir_y));
+    change_dir[Z] = _mm256_sub_pd(light_dir[Z], _mm256_load_pd(emm_dir_z));
+
+    __m256d vel_recoil = _mm256_load_pd(&vel_change_mags[0]);
+    
+    __m256d new_vel[NDir];
+    new_vel[X] = _mm256_fmadd_pd(change_dir[X], vel_recoil, curr_vel[X]);
+    new_vel[Y] = _mm256_fmadd_pd(change_dir[Y], vel_recoil, curr_vel[Y]); 
+    new_vel[Z] = _mm256_fmadd_pd(change_dir[Z], vel_recoil, curr_vel[Z]);
+
+    atoms.setVelocities(new_vel);
+  }
 }
 
 template <typename T, typename Compare>

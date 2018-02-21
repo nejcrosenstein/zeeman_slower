@@ -4,6 +4,8 @@
 #include "mathtools.hpp"
 #include "physics.hpp"
 
+
+#include <cmath>
 #include <immintrin.h>
 
 constexpr double laser_power_watt = 0.016;
@@ -18,7 +20,7 @@ constexpr double oven_exit_pos_z = 0.63 - 0.83 - 0.15;
 //
 // Beam waist at current position (let's ignore waist of Gaussian beam for now)
 // 
-__forceinline __m256d beamWaist(__m256d const& pos_on_axis)
+__forceinline __m256d __vectorcall beamWaist(__m256d const& pos_on_axis)
 {
   __m256d dist = _mm256_sub_pd(pos_on_axis, _mm256_set1_pd(oven_exit_pos_z));
 
@@ -67,7 +69,7 @@ __forceinline __m256d __vectorcall lightIntensity(
   alignas(32) double exped[4];
   for (int i = 0; i < 4; ++i)
   {
-    exped[i] = exp(-trsq[i]);
+    exped[i] = std::exp(-trsq[i]);
   }
 
   return _mm256_mul_pd(_mm256_load_pd(exped), peak_intensity);
