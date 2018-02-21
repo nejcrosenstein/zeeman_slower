@@ -19,6 +19,8 @@ using RandomGenerator = Xoroshiro;
 
 using Vecd = Vec3D<double>;
 
+static constexpr double oven_exit_radius_m = 0.003;
+
 struct ParticleQuadruple
 {
   alignas(32) double pos_x[4];
@@ -192,21 +194,23 @@ struct InitialStates
   InitialStates(
     BeamVelocityDistribution const& init_velocity, int number, RandGen_t& rand_gen)
   {
+    Uniform phi(0.0, two_pi);
+    Uniform cos_theta_initvel(cos(beam_spread_angle_rad_), 1.0);
+    Uniform zero_to_one(0.0, 1.0);
+    
     for (int i = 0; i < number; ++i)
     {
       double vel_magnitude = init_velocity(rand_gen);
 
-      double init_beam_radius = 0.003; // TODO: model nozzle
-      Uniform radius(0.0, init_beam_radius);
-
-      Uniform phi(0.0, two_pi);
-      Uniform cos_theta_initvel(cos(beam_spread_angle_rad_), 1.0);
 
       Vecd vel_init = to_cartesian(phi(rand_gen), cos_theta_initvel(rand_gen))*vel_magnitude;
 
-      double r = radius(rand_gen);
       double angle = phi(rand_gen);
-      Vecd pos_init = Vecd(r*cos(angle), r*sin(angle), -0.2);
+      double two_rand_sum = zero_to_one(rand_gen) + zero_to_one(rand_gen);
+      double r = two_rand_sum > 1 ? 2.0 - two_rand_sum : two_rand_sum;
+      double rad = r * oven_exit_radius_m;
+
+      Vecd pos_init = Vecd(rad*cos(angle), rad*sin(angle), -0.2);
 
       positions_.push_back(pos_init);
       velocities_.push_back(vel_init);
