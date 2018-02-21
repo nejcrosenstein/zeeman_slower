@@ -352,10 +352,7 @@ void simulation(ptrdiff_t number_of_threads)
   {
     auto& gen = generators.emplace_back(random_gen);
     
-    for (size_t i = 0; i < idx; ++i)
-    {
-      gen.jump();
-    }
+    gen.jump(4*idx, 1);
   }
 
   ZeemanSlower slower(2.6, 1.3, -0.3, 1.0, 2000);
