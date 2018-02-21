@@ -331,7 +331,7 @@ void simulationSingleThreaded(
 
     for (auto const& h : hists)
       for (int i = 0; i < h.histogram_.size(); ++i)
-        hist.histogram_[i] = h.histogram_[i];
+        hist.histogram_[i] += h.histogram_[i];
 
     std::cout << " iteration  " << j << std::endl;
   }
