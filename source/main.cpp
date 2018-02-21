@@ -365,6 +365,32 @@ void simulation(ptrdiff_t number_of_threads)
     }
     out << std::endl;
   }
+
+  out.close();
+
+
+  std::ofstream export_fieldshape;
+  export_fieldshape.open("fieldshape.txt");
+
+  auto const& bp = hists[0].bins_pos_;
+  double z0 = bp.lowest_start_;
+  double zstep = bp.bin_width_;
+  int nsteps = bp.number_of_bins_;
+
+  for (int i = 0; i < nsteps; ++i)
+  {
+    double z = z0 + (double(i))*zstep;
+    double field = interpolate(slower, z) + interpolate(quadrupole, z);
+
+    double vel = bohr_magneton*field / (planck_reduced * transition_wave_vec);
+
+    std::cout << z << "   " <<field << std::endl;
+
+    export_fieldshape << z << "," << vel << std::endl;
+  }
+
+  export_fieldshape.close();
+
 }
 
 

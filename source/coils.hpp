@@ -10,9 +10,6 @@
 #include "physics.hpp"
 #include "mathtools.hpp"
 
-//
-// Slower properties
-//
 
 struct MagneticField1D
 {
@@ -234,6 +231,22 @@ __forceinline __m256d __vectorcall interpolate(
   __m256d interp_pos_r = _mm256_setzero_pd();
 
   return interpolate(field.magnetic_fields_tesla_, interp_pos_r, interp_pos_z);
+}
+
+double interpolate(
+  MagneticField1D const& field,
+  double pos_z)
+{
+  // probably a bit ineffective, but no biggie: call to this function is not a bottleneck anyway
+  __m256d itp = interpolate(
+    field, 
+    _mm256_setzero_pd(), 
+    _mm256_set1_pd(pos_z));
+  
+  alignas(32) double vals[4];
+  _mm256_store_pd(vals, itp);
+
+  return vals[0];
 }
 
 
