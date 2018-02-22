@@ -199,6 +199,14 @@ __forceinline void __vectorcall computeLightDirection(
   dir[Z] = _mm256_mul_pd(dirs[Z], norm_inv);
 }
 
+struct SimulationParam
+{
+  // Frequency (*not* angular frequency)
+  double laser_detuning_hz;
+
+  // Time step in seconds
+  double time_step_s;
+};
 
 //
 // Move one step forward in time. In this function, the
@@ -220,7 +228,7 @@ static void takeOneStep(
   RandomGen_t& rand_gen,
   ZeemanSlower const& slower,
   ImportedField const& quadrupole, 
-  double time_step_s)
+  SimulationParam const& param)
 { 
   // Current position and velocity
   __m256d curr_pos[NDir];
@@ -231,7 +239,7 @@ static void takeOneStep(
 
   __m256d intensity = lightIntensity(curr_pos[X], curr_pos[Y], curr_pos[Z]);
   // TODO: make a parameter
-  __m256d detuning = _mm256_set1_pd(10.0e6);
+  __m256d detuning = _mm256_set1_pd(param.laser_detuning_hz);
 
   __m256d r_positions = _mm256_setzero_pd();
 
@@ -247,7 +255,7 @@ static void takeOneStep(
   
   __m256d scatter_rates = scatteringRate(vel_along_light_dir, intensity, detuning, field_tesla);
 
-  __m256d time_step = _mm256_set1_pd(time_step_s);
+  __m256d time_step = _mm256_set1_pd(param.time_step_s);
 
   __m256d new_pos[NDir];
   new_pos[X] = _mm256_fmadd_pd(curr_vel[X], time_step, curr_pos[X]);
@@ -319,6 +327,8 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
 {
   ParticleQuadruple atoms;
 
+  // Pop initial states and convert them
+  // into packed particle quadruple representation.
   for (int i = 0; i < 4; ++i)
   {
     int& ix = init_states.taken_;
@@ -337,7 +347,9 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
     init_states.taken_++;
   }
 
-  double time_step = 0.1*excited_state_lifetime;
+  SimulationParam param;
+  param.time_step_s = 0.1*excited_state_lifetime;
+  param.laser_detuning_hz = -10.0e6;
   
   for(;;)
   {
@@ -349,7 +361,7 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
     }
     if (at_end == 4) break;
 
-    takeOneStep(atoms, rand_gen, slower, quadrupole, time_step);
+    takeOneStep(atoms, rand_gen, slower, quadrupole, param);
   }
 }
 
@@ -428,10 +440,12 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
   //
   XoroshiroSIMD random_gen(seed); 
 
+  // 
+  // Generation of random number in different threads 
   //
-  // Create one random generator for every thread:
-  // make N copies of the generator created above and then
-  // use jump instructions. 
+  // Below we create one random generator for every parralel simulation
+  // instance. First we make N copies of the generator we created above 
+  // and then we use jump instructions again. 
   // 
   // This time, all four generators inside XoroshiroSIMD 
   // instance jump forward the same ammount of steps.
