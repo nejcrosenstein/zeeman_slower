@@ -36,9 +36,9 @@ enum Directions
 
 struct ParticleQuadruple
 {
-  alignas(32) double pos_x[NDir];
-  alignas(32) double pos_y[NDir];
-  alignas(32) double pos_z[NDir];
+  alignas(32) double pos_x[4];
+  alignas(32) double pos_y[4];
+  alignas(32) double pos_z[4];
 
   alignas(32) double vel_x[NDir];
   alignas(32) double vel_y[NDir];
