@@ -33,6 +33,81 @@ enum Directions
   NDir = 3
 };
 
+//
+// InitialStates: this struct contains initial positions and velocities of 
+// particles. The positions are drawn from uniform distribution of points 
+// within a circle. The velocities are drawn from the distribution of 
+// velocities inside a collimated beam (TODO: reference from Foot / Metcalf)
+//
+// After positions and velocities of atoms are computed, the samples are sorted 
+// according to the Z component of velocity. This is done purely for performance 
+// reasons: in simulation, the paths of four atoms are simulated simultaneously. 
+// Simulation stops when *all* four atoms fullfill the so-called "stop condition". 
+// Let's consider the following example:
+//
+// We simultaneously simulate four atoms - one with medium initial velocity and three 
+// with very high velocity. The stopping condition is fulfilled when the atoms reach 
+// the end of the slower.  One atom is slow enough so that it can be stopped by a slower. 
+// Lots of photons (~tens of thousands) will scatter on this atom and its velocity will 
+// gradually decrease. This means that this atom will reach the end position after a relatively
+// large number of time steps. The other three atoms reach the final position very quickly
+// because they are too fast to be stopper by a slower. We don't require a lot of time steps
+// to simulate the path of these three atoms, but the simulation nevertheless runs on and on
+// until the fourth atom also fullfills the stopping condition. 
+// 
+// In the above example, results are correct, but the simulation is inefficient. We can
+// improve performance if we simulate together the atoms with similar starting velocitis. 
+// We achive this by sorting the initial states.
+//
+struct InitialStates
+{
+  template<class RandGen_t>
+  
+  InitialStates(
+    BeamVelocityDistribution const& init_velocity, int number, RandGen_t& rand_gen)
+  {
+    Uniform phi(0.0, two_pi);
+    Uniform cos_theta_initvel(cos(beam_spread_angle_rad_), 1.0);
+    Uniform zero_to_one(0.0, 1.0);
+
+    for (int i = 0; i < number; ++i)
+    {
+      double vel_magnitude = init_velocity(rand_gen);
+
+      Vecd vel_init = to_cartesian(phi(rand_gen), cos_theta_initvel(rand_gen))*vel_magnitude;
+
+      double angle = phi(rand_gen);
+      double two_rand_sum = zero_to_one(rand_gen) + zero_to_one(rand_gen);
+      double r = two_rand_sum > 1 ? 2.0 - two_rand_sum : two_rand_sum;
+      double rad = r * oven_exit_radius_m;
+
+      Vecd pos_init = Vecd(rad*cos(angle), rad*sin(angle), -0.2);
+
+      positions_.push_back(pos_init);
+      velocities_.push_back(vel_init);
+    }
+
+    std::vector<std::size_t> per(number);
+    std::iota(per.begin(), per.end(), 0);
+    std::sort(per.begin(), per.end(),
+      [this](std::size_t i, std::size_t j) { return this->velocities_[i].z_ < this->velocities_[j].z_; });
+
+
+    std::vector<Vecd> sorted(number);
+    for (int i = 0; i < number; ++i) sorted[i] = velocities_[per[i]];
+    velocities_ = sorted;
+
+
+    for (int i = 0; i < number; ++i) sorted[i] = positions_[per[i]];
+    positions_ = sorted;
+
+    taken_ = 0;
+  }
+
+  int taken_;
+  std::vector<Vecd> positions_;
+  std::vector<Vecd> velocities_;
+};
 
 struct ParticleQuadruple
 {
@@ -204,66 +279,7 @@ static void takeOneStep(
   }
 }
 
-template <typename T, typename Compare>
-std::vector<std::size_t> sort_permutation(
-  const std::vector<T>& vec,
-  Compare& compare)
-{
-  std::vector<std::size_t> p(vec.size());
-  std::iota(p.begin(), p.end(), 0);
-  std::sort(p.begin(), p.end(),
-    [&](std::size_t i, std::size_t j) { return compare(vec[i], vec[j]); });
-  return p;
-}
 
-struct InitialStates
-{
-  template<class RandGen_t>
-  InitialStates(
-    BeamVelocityDistribution const& init_velocity, int number, RandGen_t& rand_gen)
-  {
-    Uniform phi(0.0, two_pi);
-    Uniform cos_theta_initvel(cos(beam_spread_angle_rad_), 1.0);
-    Uniform zero_to_one(0.0, 1.0);
-    
-    for (int i = 0; i < number; ++i)
-    {
-      double vel_magnitude = init_velocity(rand_gen);
-
-      Vecd vel_init = to_cartesian(phi(rand_gen), cos_theta_initvel(rand_gen))*vel_magnitude;
-
-      double angle = phi(rand_gen);
-      double two_rand_sum = zero_to_one(rand_gen) + zero_to_one(rand_gen);
-      double r = two_rand_sum > 1 ? 2.0 - two_rand_sum : two_rand_sum;
-      double rad = r * oven_exit_radius_m;
-
-      Vecd pos_init = Vecd(rad*cos(angle), rad*sin(angle), -0.2);
-
-      positions_.push_back(pos_init);
-      velocities_.push_back(vel_init);
-    }
-
-    std::vector<std::size_t> per(number);
-    std::iota(per.begin(), per.end(), 0);
-    std::sort(per.begin(), per.end(),
-      [this](std::size_t i, std::size_t j) { return this->velocities_[i].z_ < this->velocities_[j].z_; });
-
-
-    std::vector<Vecd> sorted(number);
-    for (int i = 0; i < number; ++i) sorted[i] = velocities_[per[i]];
-    velocities_ = sorted;
-
-
-    for (int i = 0; i < number; ++i) sorted[i] = positions_[per[i]];
-    positions_ = sorted;
-
-    taken_ = 0;
-  }
-
-  int taken_;
-  std::vector<Vecd> positions_;
-  std::vector<Vecd> velocities_;
-};
 
 template<class RanGen_t, class StopCondition>
 void simulateQuadruplePath(RanGen_t& rand_gen,
