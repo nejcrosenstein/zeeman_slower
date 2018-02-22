@@ -112,11 +112,12 @@ __forceinline void __vectorcall computeLightDirection(
 }
 
 template<class RandomGen_t>
-static void singlePhotonScatter(
+static void takeOneStep(
   ParticleQuadruple& atoms,
   RandomGen_t& rand_gen,
   ZeemanSlower const& slower,
-  ImportedField const& quadrupole)
+  ImportedField const& quadrupole, 
+  double time_step_s)
 { 
   // Current position and velocity
   __m256d curr_pos[NDir];
@@ -143,8 +144,7 @@ static void singlePhotonScatter(
   
   __m256d scatter_rates = scatteringRate(vel_along_light_dir, intensity, detuning, field_tesla);
 
-  __m256d time_step = _mm256_set1_pd(0.2 * excited_state_lifetime);
-
+  __m256d time_step = _mm256_set1_pd(time_step_s);
 
   __m256d new_pos[NDir];
   new_pos[X] = _mm256_fmadd_pd(curr_vel[X], time_step, curr_pos[X]);
@@ -230,7 +230,6 @@ struct InitialStates
     {
       double vel_magnitude = init_velocity(rand_gen);
 
-
       Vecd vel_init = to_cartesian(phi(rand_gen), cos_theta_initvel(rand_gen))*vel_magnitude;
 
       double angle = phi(rand_gen);
@@ -257,8 +256,6 @@ struct InitialStates
 
     for (int i = 0; i < number; ++i) sorted[i] = positions_[per[i]];
     positions_ = sorted;
-
-
 
     taken_ = 0;
   }
@@ -296,6 +293,7 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
     init_states.taken_++;
   }
 
+  double time_step = 0.1*excited_state_lifetime;
   
   for(;;)
   {
@@ -307,7 +305,7 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
     }
     if (at_end == 4) break;
 
-    singlePhotonScatter(atoms, rand_gen, slower, quadrupole);
+    takeOneStep(atoms, rand_gen, slower, quadrupole, time_step);
   }
 }
 
@@ -431,8 +429,6 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
 
   std::ofstream out;
   out.open("out.txt");
-
-  std::cout << "here";
 
   size_t size_vel = hists[0].bins_vel_.number_of_bins_;
   size_t size_pos = hists[0].bins_pos_.number_of_bins_;
