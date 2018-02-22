@@ -469,6 +469,7 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
   
   int atoms_per_thread = total_number_of_atoms / number_of_threads;
 
+  // TODO: create histograms here
   std::vector<Histogram> hists(number_of_threads);
   std::vector<std::thread> threads;
   for (size_t i = 0; i < number_of_threads; ++i)
@@ -483,6 +484,7 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
         &hists[i]));
   }
 
+  // Wait until simulation is finished in all threads
   joinAndClearThreads(threads);
 
   std::ofstream out;
