@@ -40,32 +40,32 @@ struct ParticleQuadruple
   alignas(32) double pos_y[4];
   alignas(32) double pos_z[4];
 
-  alignas(32) double vel_x[NDir];
-  alignas(32) double vel_y[NDir];
-  alignas(32) double vel_z[NDir];
+  alignas(32) double vel_x[4];
+  alignas(32) double vel_y[4];
+  alignas(32) double vel_z[4];
 
-  void getPositions(__m256d (&pos)[3]) const
+  void getPositions(__m256d (&pos)[NDir]) const
   {
     pos[X] = _mm256_load_pd(pos_x);
     pos[Y] = _mm256_load_pd(pos_y);
     pos[Z] = _mm256_load_pd(pos_z);
   }
 
-  void setPositions(__m256d const (&pos)[3])
+  void setPositions(__m256d const (&pos)[NDir])
   {
     _mm256_store_pd(pos_x, pos[X]);
     _mm256_store_pd(pos_y, pos[Y]);
     _mm256_store_pd(pos_z, pos[Z]);
   }
 
-  void getVelocities(__m256d (&vel)[3]) const
+  void getVelocities(__m256d (&vel)[NDir]) const
   {
     vel[X] = _mm256_load_pd(vel_x);
     vel[Y] = _mm256_load_pd(vel_y);
     vel[Z] = _mm256_load_pd(vel_z);
   }
 
-  void setVelocities(__m256d const (&vel)[3])
+  void setVelocities(__m256d const (&vel)[NDir])
   {
     _mm256_store_pd(vel_x, vel[X]);
     _mm256_store_pd(vel_y, vel[Y]);
@@ -74,30 +74,30 @@ struct ParticleQuadruple
 };
 
 __forceinline __m256d __vectorcall dotProduct(
-  const __m256d(&a)[3],
-  const __m256d(&b)[3])
+  const __m256d(&a)[NDir],
+  const __m256d(&b)[NDir])
 {
   // Some micro optimization is possible (fmadd), but
   // the effect will probably not be noticeable
-  __m256d prod0 = _mm256_mul_pd(a[0], b[0]);
-  __m256d prod1 = _mm256_mul_pd(a[1], b[1]);
-  __m256d prod2 = _mm256_mul_pd(a[2], b[2]);
+  __m256d prod0 = _mm256_mul_pd(a[X], b[X]);
+  __m256d prod1 = _mm256_mul_pd(a[Y], b[Y]);
+  __m256d prod2 = _mm256_mul_pd(a[Z], b[Z]);
 
   return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
 }
 
 __forceinline void __vectorcall computeLightDirection(
-  const __m256d (&pos)[3],
-  __m256d (&dir)[3])
+  const __m256d (&pos)[NDir],
+  __m256d (&dir)[NDir])
 {
   // focus point
-  __m256d foc[3]; 
-  foc[0] = _mm256_setzero_pd();
-  foc[1] = _mm256_setzero_pd();
-  foc[2] = _mm256_set1_pd(focus_point_z);
+  __m256d foc[NDir]; 
+  foc[X] = _mm256_setzero_pd();
+  foc[Y] = _mm256_setzero_pd();
+  foc[Z] = _mm256_set1_pd(focus_point_z);
 
-  __m256d dirs[3];
-  for (int i = 0; i < 3; ++i)
+  __m256d dirs[NDir];
+  for (int i = 0; i < NDir; ++i)
     dirs[i] = _mm256_sub_pd(foc[i], pos[i]);
 
   __m256d norm_squared = dotProduct(dirs, dirs);
@@ -106,9 +106,9 @@ __forceinline void __vectorcall computeLightDirection(
   
   __m256d norm_inv = _mm256_div_pd(_mm256_set1_pd(1.0), norm);
 
-  dir[0] = _mm256_mul_pd(dirs[0], norm_inv);
-  dir[1] = _mm256_mul_pd(dirs[1], norm_inv);
-  dir[2] = _mm256_mul_pd(dirs[2], norm_inv);
+  dir[X] = _mm256_mul_pd(dirs[X], norm_inv);
+  dir[Y] = _mm256_mul_pd(dirs[Y], norm_inv);
+  dir[Z] = _mm256_mul_pd(dirs[Z], norm_inv);
 }
 
 template<class RandomGen_t>
