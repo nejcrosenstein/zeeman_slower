@@ -109,6 +109,11 @@ struct InitialStates
   std::vector<Vecd> velocities_;
 };
 
+//
+// ParticleQuadruple contains positions and velocities of four particles. 
+// The component are packed together so that we can efficiently load 
+// them into AVX registers.
+//
 struct ParticleQuadruple
 {
   alignas(32) double pos_x[4];
@@ -148,12 +153,15 @@ struct ParticleQuadruple
   }
 };
 
+//
+// Computes dot products of 4 pairs of vectors in packed representation.
+//
 __forceinline __m256d __vectorcall dotProduct(
   const __m256d(&a)[NDir],
   const __m256d(&b)[NDir])
 {
   // Some micro optimization is possible (fmadd), but
-  // the effect will probably not be noticeable
+  // the effect would probably not be noticeable
   __m256d prod0 = _mm256_mul_pd(a[X], b[X]);
   __m256d prod1 = _mm256_mul_pd(a[Y], b[Y]);
   __m256d prod2 = _mm256_mul_pd(a[Z], b[Z]);
@@ -161,6 +169,11 @@ __forceinline __m256d __vectorcall dotProduct(
   return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
 }
 
+//
+// Computes light direction. It is assumed that the laser
+// beam is focused into a point on the slower axis. 
+// The result is normalized.
+//
 __forceinline void __vectorcall computeLightDirection(
   const __m256d (&pos)[NDir],
   __m256d (&dir)[NDir])
@@ -186,6 +199,21 @@ __forceinline void __vectorcall computeLightDirection(
   dir[Z] = _mm256_mul_pd(dirs[Z], norm_inv);
 }
 
+
+//
+// Move one step forward in time. In this function, the
+// atom position is updated: 
+//
+//    pos += velocity * time_step
+//
+// It is also determined if light scattering occurs
+// or not. We neglect the time that passes between absorbption
+// and emission. Therefore, if photon scattering condition is
+// fulfilled, we also update the velocity:
+//
+//    vel += recoil_velocity (in light direction)  // absorption
+//    vel -= recoil_velocity (in random direction) // spont. emission
+//
 template<class RandomGen_t>
 static void takeOneStep(
   ParticleQuadruple& atoms,
