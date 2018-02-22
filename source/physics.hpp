@@ -120,17 +120,24 @@ __forceinline double frequency_to_angular_freq(double freq)
   return two_pi * freq;
 }
 
-//
-// Sum function (just a sum of three elements)
-//
-__forceinline __m256d __vectorcall sum(__m256d const& a, __m256d const& b, __m256d const& c)
+__forceinline __m256d __vectorcall sub(__m256d const& a, __m256d const& b)
 {
-  return _mm256_add_pd(a, _mm256_add_pd(b, c));
+  return _mm256_sub_pd(a, b);
 }
 
-__forceinline double sum(double a, double b, double c)
+__forceinline double sub(double a, double b)
 {
-  return a + b + c;
+  return a + b;
+}
+
+__forceinline __m256d __vectorcall add(__m256d const& a, __m256d const& b)
+{
+  return _mm256_add_pd(a, b);
+}
+
+__forceinline double add(double a, double b)
+{
+  return a + b;
 }
 
 template<typename T>
@@ -145,7 +152,7 @@ __forceinline T __vectorcall scatteringRate(
   T shift_zeeman = zeemanEffect(magnetic_field_tesla);
   T shift_detuning = frequency_to_angular_freq(light_detuning_hz);
 
-  T total_detuning = sum(shift_zeeman, shift_doppler, shift_detuning);
+  T total_detuning = sub(add(shift_zeeman, shift_doppler), shift_detuning);
 
   return scatteringRate(light_intensity, total_detuning);
 }
