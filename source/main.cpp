@@ -268,12 +268,13 @@ struct InitialStates
   std::vector<Vecd> velocities_;
 };
 
-template<class RanGen_t>
+template<class RanGen_t, class StopCondition>
 void simulateQuadruplePath(RanGen_t& rand_gen,
   ZeemanSlower const& slower,
   ImportedField const& quadrupole,
   InitialStates& init_states,
-  std::array<Histogram, 4>& hists)
+  std::array<Histogram, 4>& hists,
+  StopCondition const& stop_condition)
 {
   ParticleQuadruple atoms;
 
@@ -295,13 +296,14 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
     init_states.taken_++;
   }
 
-  for (int i = 0; i < 6000000; ++i)
+  
+  for(;;)
   {
     int at_end = 0;
     for (int i = 0; i < 4; ++i)
     {
       hists[i].addSample(atoms.pos_z[i], atoms.vel_z[i]);
-      at_end += atoms.pos_z[i] > 0.8 ? 1 : 0;
+      at_end += (int)stop_condition(atoms, i);
     }
     if (at_end == 4) break;
 
@@ -325,9 +327,18 @@ void simulationSingleThreaded(
 
   std::array<Histogram, 4> hists = { hist, hist, hist, hist };
 
+  auto stop_condition = [](ParticleQuadruple const& atoms, int idx) 
+  {
+    return (atoms.pos_z[idx] > 0.8) || (atoms.vel_z[idx] < 0);
+  };
+
   for (int j = 0; j < number_of_atoms/4; ++j)
   {
-    simulateQuadruplePath(rand_gen, slower, quadrupole, init_states, hists);
+    simulateQuadruplePath(
+      rand_gen, 
+      slower, quadrupole, 
+      init_states, hists, 
+      stop_condition);
 
     for (auto const& h : hists)
       for (int i = 0; i < h.histogram_.size(); ++i)
@@ -348,7 +359,7 @@ void joinAndClearThreads(std::vector<std::thread>& threads)
   threads.clear();
 }
 
-void simulation(ptrdiff_t number_of_threads, int total_number_of_atoms)
+void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
 {
   //
   // Compute seed for first random generator
@@ -384,8 +395,8 @@ void simulation(ptrdiff_t number_of_threads, int total_number_of_atoms)
   // instance jump forward the same ammount of steps.
   //
   // After the end of this step, the generators should
-  // have the following internal states:
-  //
+  // have the following internal states (J = 2^64):
+  // 
   // SIMD generator 0: 4 generators, advanced by {0J, 1J, 2J, 3J)
   // SIMD generator 1: 4 generators, advanced by {4J, 5J, 6J, 7J)
   // etc.
