@@ -6,6 +6,14 @@
 
 #include <immintrin.h>
 
+enum Directions
+{
+  X = 0,
+  Y = 1,
+  Z = 2,
+  NDir = 3
+};
+
 template<typename T>
 T sq(T value)
 {
@@ -135,11 +143,6 @@ struct Arr2D
     data_.resize(size0_*size1_);
   }
 
-  double operator()(ptrdiff_t pos0, ptrdiff_t pos1) const
-  {
-    return data_[toIndex(pos0, pos1)];
-  }
-
   double& operator()(ptrdiff_t pos0, ptrdiff_t pos1)
   {
     return data_[toIndex(pos0, pos1)];
@@ -151,6 +154,20 @@ struct Arr2D
   std::vector<double> data_;
 };
 
+//
+// Computes dot products of 4 pairs of vectors in packed representation.
+//
+__forceinline __m256d __vectorcall dotProduct(
+  const __m256d(&a)[NDir],
+  const __m256d(&b)[NDir])
+{
+  // Some micro optimization is possible (fmadd), but
+  // the effect would probably not be noticeable
+  __m256d prod0 = _mm256_mul_pd(a[X], b[X]);
+  __m256d prod1 = _mm256_mul_pd(a[Y], b[Y]);
+  __m256d prod2 = _mm256_mul_pd(a[Z], b[Z]);
 
+  return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
+}
 
 #endif // MATHS_HPP

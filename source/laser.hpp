@@ -4,7 +4,6 @@
 #include "mathtools.hpp"
 #include "physics.hpp"
 
-
 #include <cmath>
 #include <immintrin.h>
 
@@ -16,6 +15,9 @@ constexpr double beam_spread_angle_tangent_ = beam_spread_angle_rad_;
 
 constexpr double waist_at_oven_exit = 0.004;
 constexpr double oven_exit_pos_z = 0.63 - 0.83 - 0.15;
+
+namespace laser
+{
 
 //
 // Beam waist at current position (let's ignore waist of Gaussian beam for now)
@@ -29,22 +31,17 @@ __forceinline __m256d __vectorcall beamWaist(__m256d const& pos_on_axis)
     _mm256_set1_pd(waist_at_oven_exit));
 }
 
-__forceinline double beamWaist(double pos_on_axis)
-{
-  return waist_at_oven_exit + (pos_on_axis - oven_exit_pos_z)* beam_spread_angle_tangent_;
-}
-
 // 
 // Beam intensity at current position
 //
-__forceinline __m256d __vectorcall lightIntensity(
-  __m256d const (&pos)[3])
+__forceinline __m256d __vectorcall beamIntensity(
+  __m256d const (&pos)[NDir])
 {
   __m256d rad_sq =
-    _mm256_fmadd_pd(pos[0], pos[0],
-      _mm256_mul_pd(pos[1], pos[1]));
+    _mm256_fmadd_pd(pos[X], pos[X],
+      _mm256_mul_pd(pos[Y], pos[Y]));
 
-  __m256d waist = beamWaist(pos[2]);
+  __m256d waist = beamWaist(pos[Z]);
 
   __m256d waist_sq_inv = 
     _mm256_div_pd(
@@ -73,19 +70,37 @@ __forceinline __m256d __vectorcall lightIntensity(
   return _mm256_mul_pd(_mm256_load_pd(exped), peak_intensity);
 }
 
-double lightIntensity(Vec3D<double> pos)
+//
+// Computes beam direction. It is assumed that the
+// beam converges towards a point on the slower axis. 
+// The function returns normalized direction.
+//
+__forceinline void __vectorcall beamDirection(
+  const __m256d (&pos)[NDir],
+  __m256d (&dir)[NDir])
 {
-  double rsq = sq(pos.x_) + sq(pos.y_);
+  // focus point
+  __m256d foc[NDir];
+  foc[X] = _mm256_setzero_pd();
+  foc[Y] = _mm256_setzero_pd();
+  foc[Z] = _mm256_set1_pd(focus_point_z);
 
-  double w = beamWaist(pos.z_);
+  __m256d dirs[NDir];
+  for (int i = 0; i < NDir; ++i)
+    dirs[i] = _mm256_sub_pd(foc[i], pos[i]);
 
-  double peakIntensity = 2 * laser_power_watt / (pi * sq(w));
+  __m256d norm_squared = dotProduct(dirs, dirs);
 
-  return exp(-2 * rsq / sq(w)) * peakIntensity;
+  __m256d norm = _mm256_sqrt_pd(norm_squared);
+
+  __m256d norm_inv = _mm256_div_pd(_mm256_set1_pd(1.0), norm);
+
+  dir[X] = _mm256_mul_pd(dirs[X], norm_inv);
+  dir[Y] = _mm256_mul_pd(dirs[Y], norm_inv);
+  dir[Z] = _mm256_mul_pd(dirs[Z], norm_inv);
 }
 
-
-
+} // namespace laser
 
 
 #endif // COILS_HPP

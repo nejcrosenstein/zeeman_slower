@@ -36,13 +36,6 @@ struct SimulationParam
 };
 
 
-enum Directions
-{
-  X = 0,
-  Y = 1,
-  Z = 2,
-  NDir = 3
-};
 
 //
 // InitialStates struct provides us with initial positions and velocities of 
@@ -174,54 +167,6 @@ struct ParticleQuadruple
 };
 
 //
-// Computes dot products of 4 pairs of vectors in packed representation.
-//
-__forceinline __m256d __vectorcall dotProduct(
-  const __m256d(&a)[NDir],
-  const __m256d(&b)[NDir])
-{
-  // Some micro optimization is possible (fmadd), but
-  // the effect would probably not be noticeable
-  __m256d prod0 = _mm256_mul_pd(a[X], b[X]);
-  __m256d prod1 = _mm256_mul_pd(a[Y], b[Y]);
-  __m256d prod2 = _mm256_mul_pd(a[Z], b[Z]);
-
-  return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
-}
-
-//
-// Computes light direction. It is assumed that the laser
-// beam is focused into a point on the slower axis. 
-// The result is normalized.
-//
-__forceinline void __vectorcall computeLightDirection(
-  const __m256d (&pos)[NDir],
-  __m256d (&dir)[NDir])
-{
-  // focus point
-  __m256d foc[NDir]; 
-  foc[X] = _mm256_setzero_pd();
-  foc[Y] = _mm256_setzero_pd();
-  foc[Z] = _mm256_set1_pd(focus_point_z);
-
-  __m256d dirs[NDir];
-  for (int i = 0; i < NDir; ++i)
-    dirs[i] = _mm256_sub_pd(foc[i], pos[i]);
-
-  __m256d norm_squared = dotProduct(dirs, dirs);
-
-  __m256d norm = _mm256_sqrt_pd(norm_squared);
-  
-  __m256d norm_inv = _mm256_div_pd(_mm256_set1_pd(1.0), norm);
-
-  dir[X] = _mm256_mul_pd(dirs[X], norm_inv);
-  dir[Y] = _mm256_mul_pd(dirs[Y], norm_inv);
-  dir[Z] = _mm256_mul_pd(dirs[Z], norm_inv);
-}
-
-
-
-//
 // Move one step forward in time. In this function, the
 // atom position is updated: 
 //
@@ -250,7 +195,7 @@ static void takeOneStep(
   __m256d curr_vel[NDir];
   atoms.getVelocities(curr_vel);
 
-  __m256d intensity = lightIntensity(curr_pos);
+  __m256d intensity = laser::beamIntensity(curr_pos);
 
   // TODO: combine both fields before simulation starts
   __m256d field_slower = interpolate(slower, curr_pos);
@@ -258,7 +203,7 @@ static void takeOneStep(
   __m256d field_tesla = _mm256_add_pd(field_slower, field_quad);
  
   __m256d light_dir[NDir];
-  computeLightDirection(curr_pos, light_dir);
+  laser::beamDirection(curr_pos, light_dir);
 
   __m256d vel_along_light_dir = dotProduct(curr_vel, light_dir);
   
