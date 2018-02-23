@@ -34,8 +34,8 @@ enum Directions
 };
 
 //
-// InitialStates: this struct contains initial positions and velocities of 
-// particles. The positions are drawn from uniform distribution of points 
+// InitialStates struct provides us with initial positions and velocities of 
+// particles. The positions are randomly drawn from uniform distribution of points 
 // within a circle. The velocities are drawn from the distribution of 
 // velocities inside a collimated beam (TODO: reference from Foot / Metcalf)
 //
@@ -49,15 +49,15 @@ enum Directions
 // with very high velocity. The stopping condition is fulfilled when the atoms reach 
 // the end of the slower.  One atom is slow enough so that it can be stopped by a slower. 
 // Lots of photons (~tens of thousands) will scatter on this atom and its velocity will 
-// gradually decrease. This means that this atom will reach the end position after a relatively
+// gradually decrease. This atom will therefore reach the end position after a relatively
 // large number of time steps. The other three atoms reach the final position very quickly
 // because they are too fast to be stopper by a slower. We don't require a lot of time steps
 // to simulate the path of these three atoms, but the simulation nevertheless runs on and on
-// until the fourth atom also fullfills the stopping condition. 
+// until the stopping condition is also fulfilled for the fourth atom. 
 // 
 // In the above example, results are correct, but the simulation is inefficient. We can
-// improve performance if we simulate together the atoms with similar starting velocitis. 
-// We achive this by sorting the initial states.
+// improve performance if we simulate together the atoms with similar starting velocities. 
+// We achieve this by sorting the initial states.
 //
 struct InitialStates
 {
@@ -300,7 +300,7 @@ static void takeOneStep(
     __m256d change_dir[NDir];
     change_dir[X] = _mm256_fnmadd_pd(cos_planar, sin_polar, light_dir[X]);
     change_dir[Y] = _mm256_fnmadd_pd(sin_planar, sin_polar, light_dir[Y]);
-    change_dir[Z] = _mm256_sub_pd(cos_polar, light_dir[Z]);
+    change_dir[Z] = _mm256_sub_pd(light_dir[Z], cos_polar);
 
     __m256d vel_recoil =
       _mm256_and_pd(
