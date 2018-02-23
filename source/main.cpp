@@ -13,17 +13,26 @@
 
 #include "../externals/randgen/xoroshiro128plus.hpp"
 
-using Uniform = std::uniform_real_distribution<double>;
-using Exponential = std::exponential_distribution<double>;
-
-using Vecd = Vec3D<double>;
-
-namespace parameters
-{
-  static constexpr double oven_temperature_kelvin = 353.0;
-}
-
 static constexpr double oven_exit_radius_m = 0.003;
+
+struct SimulationParam
+{
+  // Oven temperatur
+  double oven_temperature_kelvin = 353.0;
+  
+  // Frequency (*not* angular frequency)
+  double laser_detuning_hz = 0.0; // TODO: use Mhz
+
+  // Time step in seconds
+  double time_step_s = 0.1*excited_state_lifetime;
+
+  // Number of particles
+  size_t number_of_particles = 2000;
+
+  // Number of threads
+  size_t number_of_threads = 4;
+};
+
 
 enum Directions
 {
@@ -42,7 +51,7 @@ enum Directions
 // After positions and velocities of atoms are computed, the samples are sorted 
 // according to the Z component of velocity. This is done purely for performance 
 // reasons: in simulation, the paths of four atoms are simulated simultaneously. 
-// Simulation stops when *all* four atoms fullfill the so-called "stop condition". 
+// Simulation stops when *all* four atoms fulfill the so-called "stop condition". 
 // Let's consider the following example:
 //
 // We simultaneously simulate four atoms - one with medium initial velocity and three 
@@ -61,11 +70,15 @@ enum Directions
 //
 struct InitialStates
 {
+  using Vecd = Vec3D<double>;
+  
   template<class RandGen_t>
   
   InitialStates(
     BeamVelocityDistribution const& init_velocity, int number, RandGen_t& rand_gen)
   {
+    using Uniform = std::uniform_real_distribution<double>;
+    
     Uniform phi(0.0, two_pi);
     Uniform cos_theta_initvel(cos(beam_spread_angle_rad_), 1.0);
     Uniform zero_to_one(0.0, 1.0);
@@ -199,14 +212,7 @@ __forceinline void __vectorcall computeLightDirection(
   dir[Z] = _mm256_mul_pd(dirs[Z], norm_inv);
 }
 
-struct SimulationParam
-{
-  // Frequency (*not* angular frequency)
-  double laser_detuning_hz;
 
-  // Time step in seconds
-  double time_step_s;
-};
 
 //
 // Move one step forward in time. In this function, the
@@ -320,6 +326,7 @@ template<class RanGen_t, class StopCondition>
 void simulateQuadruplePath(RanGen_t& rand_gen,
   ZeemanSlower const& slower,
   ImportedField const& quadrupole,
+  SimulationParam const& param,
   InitialStates& init_states,
   std::array<Histogram, 4>& hists,
   StopCondition const& stop_condition)
@@ -345,10 +352,6 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
 
     init_states.taken_++;
   }
-
-  SimulationParam param;
-  param.time_step_s = 0.1*excited_state_lifetime;
-  param.laser_detuning_hz = -10.0e6;
   
   for(;;)
   {
@@ -369,12 +372,12 @@ void simulationSingleThreaded(
   XoroshiroSIMD rand_gen, 
   ZeemanSlower slower, 
   ImportedField quadrupole, 
-  int number_of_atoms,
+  SimulationParam param,
   Histogram* dst)
 {
-  BeamVelocityDistribution init_velocity_dist(parameters::oven_temperature_kelvin);
+  BeamVelocityDistribution init_velocity_dist(param.oven_temperature_kelvin);
 
-  InitialStates init_states(init_velocity_dist, number_of_atoms, rand_gen);
+  InitialStates init_states(init_velocity_dist, param.number_of_particles, rand_gen);
 
   Histogram hist(-50.5, 1.0, 499.5, -0.2, 0.001, 1000);
 
@@ -385,13 +388,13 @@ void simulationSingleThreaded(
     return (atoms.pos_z[idx] > 0.8) || (atoms.vel_z[idx] < 0);
   };
 
-  for (int j = 0; j < number_of_atoms/4; ++j)
+  for (int j = 0; j < param.number_of_particles/4; ++j)
   {
     simulateQuadruplePath(
       rand_gen, 
       slower, quadrupole, 
-      init_states, hists, 
-      stop_condition);
+      param, init_states, 
+      hists, stop_condition);
 
     for (auto const& h : hists)
       for (int i = 0; i < h.histogram_.size(); ++i)
@@ -412,7 +415,7 @@ void joinAndClearThreads(std::vector<std::thread>& threads)
   threads.clear();
 }
 
-void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
+void simulation(SimulationParam const& param)
 {
   //
   // Compute seed for first random generator
@@ -457,7 +460,7 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
   // etc.
   //
   std::vector<XoroshiroSIMD> generators;
-  for(size_t idx = 0; idx < number_of_threads; ++idx)
+  for(size_t idx = 0; idx < param.number_of_threads; ++idx)
   {
     generators.emplace_back(random_gen).jump(4*idx, 1);
   }
@@ -466,12 +469,16 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
   ZeemanSlower slower(0, 0, -0.3, 1.0, 2000);
   ImportedField quadrupole(0.0, "ideal.txt");
   
-  int atoms_per_thread = total_number_of_atoms / number_of_threads;
+  // Parameters for single simulation instance
+  // ("st" ----> "single thread")
+  SimulationParam param_st = param;
+  param_st.number_of_particles /= param.number_of_threads;
+  param_st.number_of_threads = 1;
 
   // TODO: create histograms here
-  std::vector<Histogram> hists(number_of_threads);
+  std::vector<Histogram> hists(param.number_of_threads);
   std::vector<std::thread> threads;
-  for (size_t i = 0; i < number_of_threads; ++i)
+  for (size_t i = 0; i < hists.size(); ++i)
   {
     threads.emplace_back(
       std::thread(
@@ -479,7 +486,7 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
         generators[i], 
         slower, 
         quadrupole, 
-        atoms_per_thread,
+        param_st,
         &hists[i]));
   }
 
@@ -498,7 +505,7 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
     for (size_t j = 0; j < size_pos; ++j)
     {
       size_t bin_sum = 0;
-      for (auto& h : hists)
+      for (auto const& h : hists)
         bin_sum += h.histogram_[ix];
       
       out << bin_sum << ",";
@@ -532,21 +539,16 @@ void simulation(ptrdiff_t number_of_threads, size_t total_number_of_atoms)
   }
 
   export_fieldshape.close();
-
 }
 
 
 int main(int argc, char* argv[])
 {
-
   std::string out_dir = "D:\\Magisterij\\magisterij\\Graphs\\phasespaces\\try";
 
-  uint32_t number_of_particles = 20000;
+  SimulationParam param;
 
-  simulation(4, number_of_particles);
-
-  std::cout << "ended" << std::endl;
-  
+  simulation(param);
   
   return 0;
 }
