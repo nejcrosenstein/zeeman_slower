@@ -13,11 +13,13 @@
 
 #include "../externals/randgen/xoroshiro128plus.hpp"
 
-static constexpr double oven_exit_radius_m = 0.003;
 
 struct SimulationParam
 {
-  // Oven temperatur
+  // Experimental apparature dimensions/geometry
+  double oven_exit_radius_m = 0.003;
+  
+  // Oven temperature
   double oven_temperature_kelvin = 353.0;
   
   // Frequency (*not* angular frequency)
@@ -75,7 +77,7 @@ struct InitialStates
   template<class RandGen_t>
   
   InitialStates(
-    BeamVelocityDistribution const& init_velocity, int number, RandGen_t& rand_gen)
+    BeamVelocityDistribution const& init_velocity, SimulationParam const& param, RandGen_t& rand_gen)
   {
     using Uniform = std::uniform_real_distribution<double>;
     
@@ -83,7 +85,11 @@ struct InitialStates
     Uniform cos_theta_initvel(cos(beam_spread_angle_rad_), 1.0);
     Uniform zero_to_one(0.0, 1.0);
 
-    for (int i = 0; i < number; ++i)
+    size_t num = param.number_of_particles;
+
+    positions_.reserve(num);
+    velocities_.reserve(num);
+    for (size_t i = 0; i < num; ++i)
     {
       double vel_magnitude = init_velocity(rand_gen);
 
@@ -92,26 +98,27 @@ struct InitialStates
       double angle = phi(rand_gen);
       double two_rand_sum = zero_to_one(rand_gen) + zero_to_one(rand_gen);
       double r = two_rand_sum > 1 ? 2.0 - two_rand_sum : two_rand_sum;
-      double rad = r * oven_exit_radius_m;
+      double rad = r * param.oven_exit_radius_m;
 
-      Vecd pos_init = Vecd(rad*cos(angle), rad*sin(angle), -0.2);
+      Vecd pos_init = Vecd(rad*cos(angle), rad*sin(angle), -0.2); // TODO: remove hardcoded initial position
 
       positions_.push_back(pos_init);
       velocities_.push_back(vel_init);
     }
 
-    std::vector<std::size_t> per(number);
+    // Sort according to Z component of velocity
+    // (the reason for this is explained in struct description)
+    std::vector<std::size_t> per(num);
     std::iota(per.begin(), per.end(), 0);
     std::sort(per.begin(), per.end(),
-      [this](std::size_t i, std::size_t j) { return this->velocities_[i].z_ < this->velocities_[j].z_; });
+      [this](std::size_t i, std::size_t j) 
+      { return this->velocities_[i].z_ < this->velocities_[j].z_; });
 
-
-    std::vector<Vecd> sorted(number);
-    for (int i = 0; i < number; ++i) sorted[i] = velocities_[per[i]];
+    std::vector<Vecd> sorted(num);
+    for (int i = 0; i < num; ++i) sorted[i] = velocities_[per[i]];
     velocities_ = sorted;
 
-
-    for (int i = 0; i < number; ++i) sorted[i] = positions_[per[i]];
+    for (int i = 0; i < num; ++i) sorted[i] = positions_[per[i]];
     positions_ = sorted;
 
     taken_ = 0;
@@ -377,12 +384,13 @@ void simulationSingleThreaded(
 {
   BeamVelocityDistribution init_velocity_dist(param.oven_temperature_kelvin);
 
-  InitialStates init_states(init_velocity_dist, param.number_of_particles, rand_gen);
+  InitialStates init_states(init_velocity_dist, param, rand_gen);
 
   Histogram hist(-50.5, 1.0, 499.5, -0.2, 0.001, 1000);
 
   std::array<Histogram, 4> hists = { hist, hist, hist, hist };
 
+  // TODO: also define it somewhere outside
   auto stop_condition = [](ParticleQuadruple const& atoms, int idx) 
   {
     return (atoms.pos_z[idx] > 0.8) || (atoms.vel_z[idx] < 0);
@@ -400,6 +408,7 @@ void simulationSingleThreaded(
       for (int i = 0; i < h.histogram_.size(); ++i)
         hist.histogram_[i] += h.histogram_[i];
 
+    // TODO: replace with %?
     std::cout << " iteration  " << j << std::endl;
   }
 
