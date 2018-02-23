@@ -154,6 +154,10 @@ namespace debug
   }
 }
 
+__forceinline __m128i __vectorcall clamp32(__m128i const& values, __m128i const& lo, __m128i const& hi)
+{
+  return _mm_min_epi32(_mm_max_epi32(values, lo), hi);
+}
 
 __forceinline __m256d __vectorcall gatherHelper(Arr2D const& src, __m128i const& ix0_32, __m128i const& ix1_32, __m128i const& stride_32)
 {
@@ -198,10 +202,10 @@ __forceinline __m256d __vectorcall interpolate(
   __m128i hi0 = _mm_set1_epi32(arr.size0_ - 1);
   __m128i hi1 = _mm_set1_epi32(arr.size1_ - 1);
 
-  __m128i cl0_lo = _mm_min_epi32(_mm_max_epi32(ix0_lo, izero), hi0);
-  __m128i cl0_hi = _mm_min_epi32(_mm_max_epi32(ix0_hi, izero), hi0);
-  __m128i cl1_lo = _mm_min_epi32(_mm_max_epi32(ix1_lo, izero), hi1);
-  __m128i cl1_hi = _mm_min_epi32(_mm_max_epi32(ix1_hi, izero), hi1);
+  __m128i cl0_lo = clamp32(ix0_lo, izero, hi0);
+  __m128i cl0_hi = clamp32(ix0_hi, izero, hi0);
+  __m128i cl1_lo = clamp32(ix1_lo, izero, hi1);
+  __m128i cl1_hi = clamp32(ix1_hi, izero, hi1);
 
   __m128i strides = _mm_set1_epi32(arr.size1_);
   __m256d v00 = gatherHelper(arr, cl0_lo, cl1_lo, strides);
@@ -209,23 +213,23 @@ __forceinline __m256d __vectorcall interpolate(
   __m256d v10 = gatherHelper(arr, cl0_hi, cl1_lo, strides);
   __m256d v11 = gatherHelper(arr, cl0_hi, cl1_hi, strides);
 
-  __m256d mul00 = _mm256_mul_pd(w0_lo, _mm256_mul_pd(w1_lo, v00));
-  __m256d mul01 = _mm256_mul_pd(w0_lo, _mm256_mul_pd(w1_hi, v01));
-  __m256d mul10 = _mm256_mul_pd(w0_hi, _mm256_mul_pd(w1_lo, v10));
-  __m256d mul11 = _mm256_mul_pd(w0_hi, _mm256_mul_pd(w1_hi, v11));
+  __m256d mul00 = multiply(w0_lo, multiply(w1_lo, v00));
+  __m256d mul01 = multiply(w0_lo, multiply(w1_hi, v01));
+  __m256d mul10 = multiply(w0_hi, multiply(w1_lo, v10));
+  __m256d mul11 = multiply(w0_hi, multiply(w1_hi, v11));
 
-  return _mm256_add_pd(_mm256_add_pd(mul00, mul01), _mm256_add_pd(mul10, mul11));
+  return add(add(mul00, mul01), add(mul10, mul11));
 }
 
 
 __forceinline __m256d __vectorcall interpolate(
   MagneticField1D const& field,
-  __m256d const (&pos)[3])
+  __m256d const (&pos)[NDir])
 {
   __m256d interp_pos_z =
     _mm256_mul_pd(
-      _mm256_set1_pd(field.step_z_inv_),
-      _mm256_sub_pd(pos[2], _mm256_set1_pd(field.start_z_)));
+      broadcast(field.step_z_inv_),
+      subtract(pos[Z], broadcast(field.start_z_)));
 
   __m256d interp_pos_r = _mm256_setzero_pd();
 

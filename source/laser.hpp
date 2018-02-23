@@ -24,11 +24,11 @@ namespace laser
 // 
 __forceinline __m256d __vectorcall beamWaist(__m256d const& pos_on_axis)
 {
-  __m256d dist = _mm256_sub_pd(pos_on_axis, _mm256_set1_pd(oven_exit_pos_z));
+  __m256d dist = subtract(pos_on_axis, broadcast(oven_exit_pos_z));
 
-  return _mm256_fmadd_pd(dist, 
-    _mm256_set1_pd(beam_spread_angle_tangent_), 
-    _mm256_set1_pd(waist_at_oven_exit));
+  return multiply_add(dist, 
+    broadcast(beam_spread_angle_tangent_), 
+    broadcast(waist_at_oven_exit));
 }
 
 // 
@@ -38,36 +38,31 @@ __forceinline __m256d __vectorcall beamIntensity(
   __m256d const (&pos)[NDir])
 {
   __m256d rad_sq =
-    _mm256_fmadd_pd(pos[X], pos[X],
-      _mm256_mul_pd(pos[Y], pos[Y]));
+    multiply_add(pos[X], pos[X],
+        multiply(pos[Y], pos[Y]));
 
   __m256d waist = beamWaist(pos[Z]);
 
-  __m256d waist_sq_inv = 
-    _mm256_div_pd(
-      _mm256_set1_pd(1.0),
-      _mm256_mul_pd(waist, waist));
+  __m256d waist_sq_inv = reciprocal(multiply(waist, waist));
 
   __m256d peak_intensity =
-    _mm256_mul_pd(
-      _mm256_set1_pd(2.0*laser_power_watt/pi),
-      waist_sq_inv);
+    multiply(waist_sq_inv, broadcast(2.0*laser_power_watt / pi));
 
   __m256d twice_ratio_squared =
-    _mm256_mul_pd(
-      _mm256_set1_pd(2.0),
-      _mm256_mul_pd(rad_sq, waist_sq_inv));
+    multiply(
+      broadcast(2.0),
+      multiply(rad_sq, waist_sq_inv));
 
-  alignas(32) double trsq[4];
-  _mm256_store_pd(trsq, twice_ratio_squared);
+  Quadruple trsq;
+  store(twice_ratio_squared, trsq);
   
-  alignas(32) double exped[4];
+  Quadruple exped;
   for (int i = 0; i < 4; ++i)
   {
     exped[i] = std::exp(-trsq[i]);
   }
 
-  return _mm256_mul_pd(_mm256_load_pd(exped), peak_intensity);
+  return multiply(load(exped), peak_intensity);
 }
 
 //
@@ -83,11 +78,11 @@ __forceinline void __vectorcall beamDirection(
   __m256d foc[NDir];
   foc[X] = _mm256_setzero_pd();
   foc[Y] = _mm256_setzero_pd();
-  foc[Z] = _mm256_set1_pd(focus_point_z);
+  foc[Z] = broadcast(focus_point_z);
 
   __m256d dirs[NDir];
   for (int i = 0; i < NDir; ++i)
-    dirs[i] = _mm256_sub_pd(foc[i], pos[i]);
+    dirs[i] = subtract(foc[i], pos[i]);
 
   __m256d norm_squared = dotProduct(dirs, dirs);
 

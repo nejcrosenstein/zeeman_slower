@@ -13,7 +13,6 @@
 
 #include "../externals/randgen/xoroshiro128plus.hpp"
 
-
 struct SimulationParam
 {
   // Experimental apparature dimensions/geometry
@@ -129,41 +128,8 @@ struct InitialStates
 //
 struct ParticleQuadruple
 {
-  alignas(32) double pos_x[4];
-  alignas(32) double pos_y[4];
-  alignas(32) double pos_z[4];
-
-  alignas(32) double vel_x[4];
-  alignas(32) double vel_y[4];
-  alignas(32) double vel_z[4];
-
-  void getPositions(__m256d (&pos)[NDir]) const
-  {
-    pos[X] = _mm256_load_pd(pos_x);
-    pos[Y] = _mm256_load_pd(pos_y);
-    pos[Z] = _mm256_load_pd(pos_z);
-  }
-
-  void setPositions(__m256d const (&pos)[NDir])
-  {
-    _mm256_store_pd(pos_x, pos[X]);
-    _mm256_store_pd(pos_y, pos[Y]);
-    _mm256_store_pd(pos_z, pos[Z]);
-  }
-
-  void getVelocities(__m256d (&vel)[NDir]) const
-  {
-    vel[X] = _mm256_load_pd(vel_x);
-    vel[Y] = _mm256_load_pd(vel_y);
-    vel[Z] = _mm256_load_pd(vel_z);
-  }
-
-  void setVelocities(__m256d const (&vel)[NDir])
-  {
-    _mm256_store_pd(vel_x, vel[X]);
-    _mm256_store_pd(vel_y, vel[Y]);
-    _mm256_store_pd(vel_z, vel[Z]);
-  }
+  Quadruple pos[NDir];
+  Quadruple vel[NDir];
 };
 
 //
@@ -185,39 +151,40 @@ static void takeOneStep(
   ParticleQuadruple& atoms,
   RandomGen_t& rand_gen,
   ZeemanSlower const& slower,
-  ImportedField const& quadrupole, 
+  ImportedField const& quadrupole_coil, 
   SimulationParam const& param)
 { 
   // Current position and velocity
-  __m256d curr_pos[NDir];
-  atoms.getPositions(curr_pos);
-  
-  __m256d curr_vel[NDir];
-  atoms.getVelocities(curr_vel);
 
+  __m256d curr_pos[NDir];
+  __m256d curr_vel[NDir];
+  forall_directions(dir)
+  {
+    curr_pos[dir] = load(atoms.pos[dir]);
+    curr_vel[dir] = load(atoms.vel[dir]);
+  }
   __m256d intensity = laser::beamIntensity(curr_pos);
 
   // TODO: combine both fields before simulation starts
   __m256d field_slower = interpolate(slower, curr_pos);
-  __m256d field_quad = interpolate(quadrupole, curr_pos);
-  __m256d field_tesla = _mm256_add_pd(field_slower, field_quad);
+  __m256d field_quad = interpolate(quadrupole_coil, curr_pos);
+  __m256d field_tesla = add(field_slower, field_quad);
  
   __m256d light_dir[NDir];
   laser::beamDirection(curr_pos, light_dir);
 
   __m256d vel_along_light_dir = dotProduct(curr_vel, light_dir);
   
-  __m256d laser_detuning = _mm256_set1_pd(param.laser_detuning_hz);
+  __m256d laser_detuning = broadcast(param.laser_detuning_hz);
   __m256d scatter_rates = scatteringRate(vel_along_light_dir, intensity, laser_detuning, field_tesla);
 
-  __m256d time_step = _mm256_set1_pd(param.time_step_s);
+  __m256d time_step = broadcast(param.time_step_s);
 
-  __m256d new_pos[NDir];
-  new_pos[X] = _mm256_fmadd_pd(curr_vel[X], time_step, curr_pos[X]);
-  new_pos[Y] = _mm256_fmadd_pd(curr_vel[Y], time_step, curr_pos[Y]);
-  new_pos[Z] = _mm256_fmadd_pd(curr_vel[Z], time_step, curr_pos[Z]);
-
-  atoms.setPositions(new_pos);
+  forall_directions(dir)
+  {
+    __m256d new_pos = multiply_add(curr_vel[dir], time_step, curr_pos[dir]);
+    store(new_pos, atoms.pos[dir]);
+  }
 
   // scatter event probability
   __m256d probs = _mm256_mul_pd(scatter_rates, time_step);
@@ -231,13 +198,13 @@ static void takeOneStep(
 
   if(mmask)
   { 
-    double cos_phi[4] = { 0, 0, 0, 0 };
-    double sin_phi[4] = { 0, 0, 0, 0 };
+    Quadruple cos_phi = { 0, 0, 0, 0 };
+    Quadruple sin_phi = { 0, 0, 0, 0 };
     
-    double phi[4];
     __m256d planar = rand_gen.random_simd(0.0, two_pi);
     __m256d cos_polar = rand_gen.random_simd(-1.0, 1.0);
-    _mm256_store_pd(phi, planar);
+    Quadruple phi;
+    store(planar, phi);
 
     for (int i = 0; i < 4; ++i)
     {
@@ -249,28 +216,27 @@ static void takeOneStep(
       }
     }
 
-    __m256d cos_planar = _mm256_load_pd(cos_phi);
-    __m256d sin_planar = _mm256_load_pd(sin_phi);
+    __m256d cos_planar = load(cos_phi);
+    __m256d sin_planar = load(sin_phi);
 
-    __m256d sin_polar_sq = _mm256_fnmadd_pd(cos_polar, cos_polar, _mm256_set1_pd(1.0));
-    __m256d sin_polar = _mm256_sqrt_pd(sin_polar_sq);
+    __m256d sin_polar_sq = _mm256_fnmadd_pd(cos_polar, cos_polar, broadcast(1.0));
+    __m256d sin_polar = squareRoot(sin_polar_sq);
 
     __m256d change_dir[NDir];
     change_dir[X] = _mm256_fnmadd_pd(cos_planar, sin_polar, light_dir[X]);
     change_dir[Y] = _mm256_fnmadd_pd(sin_planar, sin_polar, light_dir[Y]);
-    change_dir[Z] = _mm256_sub_pd(light_dir[Z], cos_polar);
+    change_dir[Z] = subtract(light_dir[Z], cos_polar);
 
     __m256d vel_recoil =
       _mm256_and_pd(
-        _mm256_set1_pd(recoil_velocity),
+        broadcast(recoil_velocity),
         comparison);
 
-    __m256d new_vel[NDir];
-    new_vel[X] = _mm256_fmadd_pd(change_dir[X], vel_recoil, curr_vel[X]);
-    new_vel[Y] = _mm256_fmadd_pd(change_dir[Y], vel_recoil, curr_vel[Y]); 
-    new_vel[Z] = _mm256_fmadd_pd(change_dir[Z], vel_recoil, curr_vel[Z]);
-
-    atoms.setVelocities(new_vel);
+    forall_directions(dir)
+    {
+      __m256d new_vel = multiply_add(change_dir[dir], vel_recoil, curr_vel[dir]);
+      store(new_vel, atoms.vel[dir]);
+    }
   }
 }
 
@@ -294,13 +260,13 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
     auto pos = init_states.positions_[ix];
     auto vel = init_states.velocities_[ix];
 
-    atoms.pos_x[i] = pos.x_;
-    atoms.pos_y[i] = pos.y_;
-    atoms.pos_z[i] = pos.z_;
+    atoms.pos[X][i] = pos.x_;
+    atoms.pos[Y][i] = pos.y_;
+    atoms.pos[Z][i] = pos.z_;
 
-    atoms.vel_x[i] = vel.x_;
-    atoms.vel_y[i] = vel.y_;
-    atoms.vel_z[i] = vel.z_;
+    atoms.vel[X][i] = vel.x_;
+    atoms.vel[Y][i] = vel.y_;
+    atoms.vel[Z][i] = vel.z_;
 
     init_states.taken_++;
   }
@@ -310,7 +276,7 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
     int at_end = 0;
     for (int i = 0; i < 4; ++i)
     {
-      hists[i].addSample(atoms.pos_z[i], atoms.vel_z[i]);
+      hists[i].addSample(atoms.pos[Z][i], atoms.vel[Z][i]);
       at_end += (int)stop_condition(atoms, i);
     }
     if (at_end == 4) break;
@@ -338,7 +304,7 @@ void simulationSingleThreaded(
   // TODO: also define it somewhere outside
   auto stop_condition = [](ParticleQuadruple const& atoms, int idx) 
   {
-    return (atoms.pos_z[idx] > 0.8) || (atoms.vel_z[idx] < 0);
+    return (atoms.pos[Z][idx] > 0.8) || (atoms.vel[Z][idx] < 0);
   };
 
   for (int j = 0; j < param.number_of_particles/4; ++j)

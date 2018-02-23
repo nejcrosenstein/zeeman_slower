@@ -14,6 +14,8 @@ enum Directions
   NDir = 3
 };
 
+#define forall_directions(dir) for(int dir = 0; dir < NDir; ++dir)
+
 template<typename T>
 T sq(T value)
 {
@@ -154,6 +156,12 @@ struct Arr2D
   std::vector<double> data_;
 };
 
+
+//
+// Alias type for quadruple of double values.
+// 
+typedef double Quadruple[4];
+
 //
 // Computes dot products of 4 pairs of vectors in packed representation.
 //
@@ -168,6 +176,46 @@ __forceinline __m256d __vectorcall dotProduct(
   __m256d prod2 = _mm256_mul_pd(a[Z], b[Z]);
 
   return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
+}
+
+__forceinline __m256d __vectorcall reciprocal(__m256d const& value)
+{
+  return _mm256_div_pd(_mm256_set1_pd(1.0), value);
+}
+
+__forceinline __m256d __vectorcall multiply(__m256d const& value, __m256d const& other)
+{
+  return _mm256_mul_pd(value, other);
+}
+
+__forceinline __m256d __vectorcall multiply_add(__m256d const& mul0, __m256d const& mul1, __m256d const& add)
+{
+  return _mm256_fmadd_pd(mul0, mul1, add);
+}
+
+__forceinline __m256d __vectorcall subtract(__m256d const& value, __m256d const& other)
+{
+  return _mm256_sub_pd(value, other);
+}
+
+__forceinline __m256d __vectorcall broadcast(double value)
+{
+  return _mm256_set1_pd(value);
+}
+
+__forceinline __m256d __vectorcall load(Quadruple const& value)
+{
+  return _mm256_load_pd(value);
+}
+
+__forceinline void __vectorcall store(__m256d const& value, Quadruple& dst)
+{
+  return _mm256_store_pd(dst, value);
+}
+
+__forceinline __m256d __vectorcall squareRoot(__m256d const& value)
+{
+  return _mm256_sqrt_pd(value);
 }
 
 #endif // MATHS_HPP
