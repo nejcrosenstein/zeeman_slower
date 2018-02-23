@@ -237,23 +237,20 @@ static void takeOneStep(
   __m256d curr_vel[NDir];
   atoms.getVelocities(curr_vel);
 
-  __m256d intensity = lightIntensity(curr_pos[X], curr_pos[Y], curr_pos[Z]);
-  // TODO: make a parameter
-  __m256d detuning = _mm256_set1_pd(param.laser_detuning_hz);
-
-  __m256d r_positions = _mm256_setzero_pd();
+  __m256d intensity = lightIntensity(curr_pos);
 
   // TODO: combine both fields before simulation starts
-  __m256d slower_fields = interpolate(slower, r_positions, curr_pos[Z]);
-  __m256d quad_fields = interpolate(quadrupole, r_positions, curr_pos[Z]);
-  __m256d field_tesla = _mm256_add_pd(slower_fields, quad_fields);
+  __m256d field_slower = interpolate(slower, curr_pos);
+  __m256d field_quad = interpolate(quadrupole, curr_pos);
+  __m256d field_tesla = _mm256_add_pd(field_slower, field_quad);
  
   __m256d light_dir[NDir];
   computeLightDirection(curr_pos, light_dir);
 
   __m256d vel_along_light_dir = dotProduct(curr_vel, light_dir);
   
-  __m256d scatter_rates = scatteringRate(vel_along_light_dir, intensity, detuning, field_tesla);
+  __m256d laser_detuning = _mm256_set1_pd(param.laser_detuning_hz);
+  __m256d scatter_rates = scatteringRate(vel_along_light_dir, intensity, laser_detuning, field_tesla);
 
   __m256d time_step = _mm256_set1_pd(param.time_step_s);
 
@@ -264,48 +261,52 @@ static void takeOneStep(
 
   atoms.setPositions(new_pos);
 
+  // scatter event probability
   __m256d probs = _mm256_mul_pd(scatter_rates, time_step);
 
+  // number drawn from uniform distribution between 0 and 1
   __m256d uniform = rand_gen.random_simd();
-  __m256d compared = _mm256_cmp_pd(uniform, probs, _CMP_LE_OQ);
 
-  int mmask = _mm256_movemask_pd(compared);
+  __m256d comparison = _mm256_cmp_pd(uniform, probs, _CMP_LE_OQ);
+
+  int mmask = _mm256_movemask_pd(comparison);
 
   if(mmask)
   { 
-    // TODO: could probably do some cleanup below
-    double vel_change_mags[4] = { 0, 0, 0, 0 };
-    double emm_dir_x[4] = { 0, 0, 0, 0 };
-    double emm_dir_y[4] = { 0, 0, 0, 0 };
-    double emm_dir_z[4] = { 0, 0, 0, 0 };
+    double cos_phi[4] = { 0, 0, 0, 0 };
+    double sin_phi[4] = { 0, 0, 0, 0 };
     
     double phi[4];
-    double ctheta[4];
-    __m256d vecphi = rand_gen.random_simd(0.0, two_pi);
-    __m256d vecctheta = rand_gen.random_simd(-1.0, 1.0);
-    _mm256_store_pd(phi, vecphi);
-    _mm256_store_pd(ctheta, vecctheta);
+    __m256d planar = rand_gen.random_simd(0.0, two_pi);
+    __m256d cos_polar = rand_gen.random_simd(-1.0, 1.0);
+    _mm256_store_pd(phi, planar);
 
     for (int i = 0; i < 4; ++i)
     {
       bool scatter_occurs = (mmask & (1 << i));
       if (scatter_occurs)
       {
-        emm_dir_x[i] = cos(phi[i])*sqrt(1.0 - sq(ctheta[i]));
-        emm_dir_y[i] = sin(phi[i])*sqrt(1.0 - sq(ctheta[i]));
-        emm_dir_z[i] = ctheta[i];
-
-        vel_change_mags[i] = recoil_velocity; // else remains 0
+        cos_phi[i] = cos(phi[i]);
+        sin_phi[i] = sin(phi[i]);
       }
     }
 
-    __m256d change_dir[NDir];
-    change_dir[X] = _mm256_sub_pd(light_dir[X], _mm256_load_pd(emm_dir_x));
-    change_dir[Y] = _mm256_sub_pd(light_dir[Y], _mm256_load_pd(emm_dir_y));
-    change_dir[Z] = _mm256_sub_pd(light_dir[Z], _mm256_load_pd(emm_dir_z));
+    __m256d cos_planar = _mm256_load_pd(cos_phi);
+    __m256d sin_planar = _mm256_load_pd(sin_phi);
 
-    __m256d vel_recoil = _mm256_load_pd(&vel_change_mags[0]);
-    
+    __m256d sin_polar_sq = _mm256_fnmadd_pd(cos_polar, cos_polar, _mm256_set1_pd(1.0));
+    __m256d sin_polar = _mm256_sqrt_pd(sin_polar_sq);
+
+    __m256d change_dir[NDir];
+    change_dir[X] = _mm256_fnmadd_pd(cos_planar, sin_polar, light_dir[X]);
+    change_dir[Y] = _mm256_fnmadd_pd(sin_planar, sin_polar, light_dir[Y]);
+    change_dir[Z] = _mm256_sub_pd(cos_polar, light_dir[Z]);
+
+    __m256d vel_recoil =
+      _mm256_and_pd(
+        _mm256_set1_pd(recoil_velocity),
+        comparison);
+
     __m256d new_vel[NDir];
     new_vel[X] = _mm256_fmadd_pd(change_dir[X], vel_recoil, curr_vel[X]);
     new_vel[Y] = _mm256_fmadd_pd(change_dir[Y], vel_recoil, curr_vel[Y]); 
@@ -314,8 +315,6 @@ static void takeOneStep(
     atoms.setVelocities(new_vel);
   }
 }
-
-
 
 template<class RanGen_t, class StopCondition>
 void simulateQuadruplePath(RanGen_t& rand_gen,

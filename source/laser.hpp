@@ -38,15 +38,13 @@ __forceinline double beamWaist(double pos_on_axis)
 // Beam intensity at current position
 //
 __forceinline __m256d __vectorcall lightIntensity(
-  __m256d const& pos_x,
-  __m256d const& pos_y,
-  __m256d const& pos_z)
+  __m256d const (&pos)[3])
 {
   __m256d rad_sq =
-    _mm256_fmadd_pd(pos_x, pos_x,
-      _mm256_mul_pd(pos_y, pos_y));
+    _mm256_fmadd_pd(pos[0], pos[0],
+      _mm256_mul_pd(pos[1], pos[1]));
 
-  __m256d waist = beamWaist(pos_z);
+  __m256d waist = beamWaist(pos[2]);
 
   __m256d waist_sq_inv = 
     _mm256_div_pd(

@@ -220,13 +220,12 @@ __forceinline __m256d __vectorcall interpolate(
 
 __forceinline __m256d __vectorcall interpolate(
   MagneticField1D const& field,
-  __m256d const& pos_radial,
-  __m256d const& pos_z)
+  __m256d const (&pos)[3])
 {
   __m256d interp_pos_z =
     _mm256_mul_pd(
       _mm256_set1_pd(field.step_z_inv_),
-      _mm256_sub_pd(pos_z, _mm256_set1_pd(field.start_z_)));
+      _mm256_sub_pd(pos[2], _mm256_set1_pd(field.start_z_)));
 
   __m256d interp_pos_r = _mm256_setzero_pd();
 
@@ -237,11 +236,18 @@ double interpolate(
   MagneticField1D const& field,
   double pos_z)
 {
-  // probably a bit ineffective, but no biggie: call to this function is not a bottleneck anyway
+  // this is probably quite ineffective, but no biggie:
+  // this function is only called at the beginning of the simulation
+  // and measurements show that it is not a bottleneck anyway
+  __m256d pos[3] =
+  {
+    _mm256_setzero_pd(),
+    _mm256_setzero_pd(),
+    _mm256_set1_pd(pos_z)
+  };
+
   __m256d itp = interpolate(
-    field, 
-    _mm256_setzero_pd(), 
-    _mm256_set1_pd(pos_z));
+    field, pos);
   
   alignas(32) double vals[4];
   _mm256_store_pd(vals, itp);
