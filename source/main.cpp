@@ -3,6 +3,8 @@
 #include <fstream>
 #include <array>
 #include <thread>
+#include <iomanip>
+#include <optional>
 
 #include "mathtools.hpp"
 #include "physics.hpp"
@@ -154,27 +156,7 @@ struct LaserBeam
 // particles. The positions are randomly drawn from uniform distribution of points 
 // within a circle. The velocities are drawn from the distribution of 
 // velocities inside a collimated beam (TODO: reference from Foot / Metcalf)
-//
-// After positions and velocities of atoms are computed, the samples are sorted 
-// according to the Z component of velocity. This is done purely for performance 
-// reasons: in simulation, the paths of four atoms are simulated simultaneously. 
-// Simulation stops when *all* four atoms fulfill the so-called "stop condition". 
-// Let's consider the following example:
-//
-// We simultaneously simulate four atoms - one with medium initial velocity and three 
-// with very high velocity. The stopping condition is fulfilled when the atoms reach 
-// the end of the slower.  One atom is slow enough so that it can be stopped by a slower. 
-// Lots of photons (~tens of thousands) will scatter on this atom and its velocity will 
-// gradually decrease. This atom will therefore reach the end position after a relatively
-// large number of time steps. The other three atoms reach the final position very quickly
-// because they are too fast to be stopper by a slower. We don't require a lot of time steps
-// to simulate the path of these three atoms, but the simulation nevertheless runs on and on
-// until the stopping condition is also fulfilled for the fourth atom. 
 // 
-// In the above example, results are correct, but the simulation is inefficient. We can
-// improve performance if we simulate together the atoms with similar starting velocities. 
-// We achieve this by sorting the initial states.
-//
 struct InitialStates
 {
   typedef double vec3d[NDir];
@@ -221,14 +203,28 @@ struct InitialStates
     }
 
     // Sort according to Z component of velocity
-    // (the reason for this is explained in struct description)
+    // This sorting is not cruiciable and it does not affect the
+    // outcome of the simulation or performance. It just makes 
+    // some debug / profiling operations easier.
     std::sort(
       initial_states_.begin(), 
       initial_states_.end(),
       [this](auto const& particle, auto const& other) 
       { return particle.vel_[Z] < other.vel_[Z]; });
+  }
 
-    taken_ = 0;
+
+
+  std::optional<Particle> pop_state()
+  {
+    if (initial_states_.size() == 0)
+    {
+      return std::nullopt;
+    }
+    
+    Particle last = initial_states_.back();
+    initial_states_.pop_back();
+    return last;
   }
 
   // works OK for 0 < theta < pi
@@ -240,7 +236,6 @@ struct InitialStates
     dst[Z] = cos_theta;
   }
 
-  int taken_;
   std::vector<Particle> initial_states_;
 };
 
@@ -371,49 +366,6 @@ static void takeOneStep(
   }
 }
 
-template<class RanGen_t, class StopCondition>
-void simulateQuadruplePath(RanGen_t& rand_gen,
-  ZeemanSlower const& slower,
-  ImportedField const& quadrupole,
-  LaserBeam const& laser,
-  SimulationParam const& param,
-  InitialStates& init_states,
-  std::array<Histogram, 4>& hists,
-  StopCondition const& stop_condition)
-{
-  ParticleQuadruple atoms;
-
-  // Pop initial states and convert them
-  // into packed particle quadruple representation.
-  for_every_quadruple_member(i)
-  {
-    int& ix = init_states.taken_;
-
-    auto const& s = init_states.initial_states_[ix];
-
-    for_every_direction(dir)
-    {
-      atoms.pos[dir][i] = s.pos_[dir];
-      atoms.vel[dir][i] = s.vel_[dir];
-    }
-
-    init_states.taken_++;
-  }
-  
-  for(;;)
-  {
-    int at_end = 0;
-    for_every_quadruple_member(i)
-    {
-      hists[i].addSample(atoms.pos[Z][i], atoms.vel[Z][i]);
-      at_end += (int)stop_condition(atoms, i);
-    }
-    if (at_end == 4) break;
-
-    takeOneStep(atoms, rand_gen, slower, quadrupole, laser, param);
-  }
-}
-
 // just pass everything by copy
 void simulationSingleThreaded(
   XoroshiroSIMD rand_gen, 
@@ -434,25 +386,73 @@ void simulationSingleThreaded(
   // TODO: also define it somewhere outside
   auto stop_condition = [](ParticleQuadruple const& atoms, int idx) 
   {
-    return (atoms.pos[Z][idx] > 0.8) || (atoms.vel[Z][idx] < 0);
+    return (atoms.pos[Z][idx] > 0.8) || 
+           (atoms.vel[Z][idx] < 0.0);
   };
 
-  for (int j = 0; j < param.number_of_particles/4; ++j)
+  ParticleQuadruple atoms;
+
+  // Pop initial states and convert them
+  // into packed particle quadruple representation.
+  for_every_quadruple_member(i)
   {
-    simulateQuadruplePath(
-      rand_gen, 
-      slower, quadrupole, 
-      laser, param, 
-      init_states, 
-      hists, stop_condition);
-
-    for (auto const& h : hists)
-      for (int i = 0; i < h.histogram_.size(); ++i)
-        hist.histogram_[i] += h.histogram_[i];
-
-    // TODO: replace with %?
-    std::cout << " iteration  " << j << std::endl;
+    auto s = init_states.pop_state();
+    for_every_direction(dir)
+    {
+      atoms.pos[dir][i] = s->pos_[dir];
+      atoms.vel[dir][i] = s->vel_[dir];
+    }
   }
+
+  size_t total = param.number_of_particles;
+  size_t num_remaining = total;
+
+  float progress = 0.0f;
+  float progress_step = 0.1f;
+
+  while(num_remaining != 0)
+  {  
+    for_every_quadruple_member(i)
+    {
+      hists[i].addSample(atoms.pos[Z][i], atoms.vel[Z][i]);
+      
+      bool finished = stop_condition(atoms, i);
+
+      if (finished)
+      {
+        --num_remaining;
+
+        auto const& s = init_states.pop_state();
+
+        if (s)
+        {
+          for_every_direction(dir)
+          {
+            atoms.pos[dir][i] = s->pos_[dir];
+            atoms.vel[dir][i] = s->vel_[dir];
+          }
+        }
+
+#if 1
+        float ratio = 1.0f - float(num_remaining) / float(total);
+        if (ratio > progress)
+        {
+          progress += progress_step;
+       
+          std::cout
+            << std::setprecision(2)
+            << "Progress:" << ratio << std::endl;
+        }
+#endif
+      }
+    }
+
+    takeOneStep(atoms, rand_gen, slower, quadrupole, laser, param);
+  }
+
+  for (auto const& h : hists)
+    for (int i = 0; i < h.histogram_.size(); ++i)
+      hist.histogram_[i] += h.histogram_[i];
 
   *dst = hist;
 }
