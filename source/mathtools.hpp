@@ -2,9 +2,9 @@
 #define MATHS_HPP
 
 #include <cmath>
-#include <optional>
 
 #include <immintrin.h>
+
 
 enum Directions
 {
@@ -14,7 +14,25 @@ enum Directions
   NDir = 3
 };
 
-#define forall_directions(dir) for(int dir = 0; dir < NDir; ++dir)
+//
+// Alias type for quadruple of double values.
+// 
+typedef double QuadrupleScalar[4];
+
+// 
+// Alias type for static array of three quadruples
+//
+typedef QuadrupleScalar QuadrupleScalar3D[NDir];
+
+//
+// Alias type for static array of three AVX registers (three quadruples)
+//
+typedef __m256d QuadrupleAVX_3D[NDir];
+
+
+#define for_every_direction(dir) for(int dir = 0; dir < NDir; ++dir)
+
+#define for_every_quadruple_member(idx) for(int idx = 0; idx < 4; ++idx)
 
 template<typename T>
 T sq(T value)
@@ -22,83 +40,6 @@ T sq(T value)
   return value*value;
 }
 
-template<typename T>
-struct Vec3D
-{
-  union
-  {
-    struct { 
-      T x_;
-      T y_;
-      T z_;
-    };
-    T components[3];
-  };
-
-  Vec3D() {};
-
-  Vec3D(T val) : 
-    x_(val), y_(val), z_(val){}
-
-  Vec3D(T x, T y, T z) :
-    x_(x), y_(y), z_(z) {}
-
-  Vec3D operator*(T val) const
-  {
-    return Vec3D(val*x_, val*y_, val*z_);
-  }
-
-  Vec3D operator/(T val) const
-  {
-    T rcp = T(1) / val;
-    return (*this)*rcp;
-  }
-
-  void operator*=(T val) const
-  {
-    this->x_ *= val;
-    this->y_ *= val;
-    this->z_ *= val;
-  }
-
-  Vec3D operator+(Vec3D const& other) const
-  {
-    return Vec3D(
-      other.x_ + this->x_,
-      other.y_ + this->y_,
-      other.z_ + this->z_
-      );
-  }
-
-  void operator+=(Vec3D const& other) 
-  {
-    this->x_ += other.x_;
-    this->y_ += other.y_;
-    this->z_ += other.z_;
-  }
-
-  double norm_sq() const
-  {
-    return sq(x_) + sq(y_) + sq(z_);
-  }
-
-  double norm() const
-  {
-    return std::sqrt(norm_sq());
-  }
-
-};
-
-
-template<typename T>
-static std::optional<double> dotProduct(Vec3D<T> const& a, Vec3D<T> const& b)
-{
-  double denom = std::sqrt(a.norm_sq() * b.norm_sq());
-
-  return denom > 0.0 ?
-    (a.x_*b.x_ + a.y_*b.y_ + a.z_*b.z_) / denom :
-    std::nullopt;
-}
 
 namespace constexpr_functions
 {
@@ -108,28 +49,10 @@ namespace constexpr_functions
   }
 }
 
-// works OK for 0 < theta < pi
-Vec3D<double> to_cartesian(double phi, double cos_theta)
-{
-  using namespace std;
-  return
-  {
-    cos(phi)*sqrt(1.0 - sq(cos_theta)),
-    sin(phi)*sqrt(1.0 - sq(cos_theta)),
-    cos_theta
-  };
-}
-
-template<typename T>
-__forceinline T index_clamp(T index, T low, T high)
-{
-  return std::min(std::max(index, low), high - 1);
-}
 
 //
-// Structures and functions for work with 2-dimensional arrays
+// Structure for work with 2-dimensional arrays
 //
-
 struct Arr2D
 {
   ptrdiff_t toIndex(ptrdiff_t pos0, ptrdiff_t pos1) const
@@ -157,26 +80,6 @@ struct Arr2D
 };
 
 
-//
-// Alias type for quadruple of double values.
-// 
-typedef double Quadruple[4];
-
-//
-// Computes dot products of 4 pairs of vectors in packed representation.
-//
-__forceinline __m256d __vectorcall dotProduct(
-  const __m256d(&a)[NDir],
-  const __m256d(&b)[NDir])
-{
-  // Some micro optimization is possible (fmadd), but
-  // the effect would probably not be noticeable
-  __m256d prod0 = _mm256_mul_pd(a[X], b[X]);
-  __m256d prod1 = _mm256_mul_pd(a[Y], b[Y]);
-  __m256d prod2 = _mm256_mul_pd(a[Z], b[Z]);
-
-  return _mm256_add_pd(prod0, _mm256_add_pd(prod1, prod2));
-}
 
 __forceinline __m256d __vectorcall reciprocal(__m256d const& value)
 {
@@ -193,6 +96,11 @@ __forceinline __m256d __vectorcall multiply_add(__m256d const& mul0, __m256d con
   return _mm256_fmadd_pd(mul0, mul1, add);
 }
 
+__forceinline __m256d __vectorcall add(__m256d const& a, __m256d const& b)
+{
+  return _mm256_add_pd(a, b);
+}
+
 __forceinline __m256d __vectorcall subtract(__m256d const& value, __m256d const& other)
 {
   return _mm256_sub_pd(value, other);
@@ -203,12 +111,12 @@ __forceinline __m256d __vectorcall broadcast(double value)
   return _mm256_set1_pd(value);
 }
 
-__forceinline __m256d __vectorcall load(Quadruple const& value)
+__forceinline __m256d __vectorcall load(QuadrupleScalar const& value)
 {
   return _mm256_load_pd(value);
 }
 
-__forceinline void __vectorcall store(__m256d const& value, Quadruple& dst)
+__forceinline void __vectorcall store(__m256d const& value, QuadrupleScalar& dst)
 {
   return _mm256_store_pd(dst, value);
 }
@@ -216,6 +124,18 @@ __forceinline void __vectorcall store(__m256d const& value, Quadruple& dst)
 __forceinline __m256d __vectorcall squareRoot(__m256d const& value)
 {
   return _mm256_sqrt_pd(value);
+}
+
+//
+// Computes dot products of 4 pairs of vectors in packed representation.
+//
+__forceinline __m256d __vectorcall dotProduct(
+  QuadrupleAVX_3D const& a,
+  QuadrupleAVX_3D const& b)
+{
+  __m256d partial = multiply_add(a[Y], b[Y], multiply(a[X], b[X]));
+
+  return multiply_add(a[Z], b[Z], partial);
 }
 
 #endif // MATHS_HPP

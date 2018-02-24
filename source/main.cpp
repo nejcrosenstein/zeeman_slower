@@ -9,33 +9,146 @@
 #include "coils.hpp"
 #include "beam.hpp"
 #include "histogram.hpp"
-#include "laser.hpp"
 
 #include "../externals/randgen/xoroshiro128plus.hpp"
 
 struct SimulationParam
 {
-  // Experimental apparature dimensions/geometry
-  double oven_exit_radius_m = 0.003;
+  struct LaserBeamParam
+  {
+    double beam_spread_angle_rad = 0.004;
+    double beam_spread_angle_tangent = beam_spread_angle_rad;
+
+    double waist_at_oven_exit = 0.004;
+    double oven_exit_pos_z = 0.63 - 0.83 - 0.15;
+
+    double focus_point_z = -1.4;
+    double laser_power_watt = 0.01;
+
+  } laser_beam_param_;
+  
   
   // Oven temperature
   double oven_temperature_kelvin = 353.0;
+
+  // Atomic beam properties
+  double beam_spread_angle_rad = 0.004;
   
-  // Frequency (*not* angular frequency)
+  // Frequency detuning (*not* angular frequency)
   double laser_detuning_hz = 0.0; // TODO: use Mhz
+  double laser_power_watt = 0.005;
+
+  double focus_point_z = -1.4; // in meters
+
+  // Simulation initial conditions
+  double initial_atomic_beam_radius_m = 0.003;
+  double simulation_start_z_m = -0.2;
 
   // Time step in seconds
   double time_step_s = 0.1*excited_state_lifetime;
 
   // Number of particles
-  size_t number_of_particles = 2000;
+  size_t number_of_particles = 10000;
 
   // Number of threads
   size_t number_of_threads = 4;
 };
 
+// **************************************************************
+//
+//          Laser beam properties
+//
+// **************************************************************
 
+struct LaserBeam
+{
+  using Param_t = SimulationParam::LaserBeamParam;
+  
+  Param_t param_;
 
+  LaserBeam(Param_t const& param) : param_(param){}
+  //
+  // Beam waist at current position (let's ignore waist of Gaussian beam for now)
+  // 
+  __forceinline __m256d __vectorcall beamWaist(__m256d const& pos_on_axis) const
+  {
+    __m256d dist = subtract(pos_on_axis, broadcast(param_.oven_exit_pos_z));
+
+    return multiply_add(dist,
+      broadcast(param_.beam_spread_angle_tangent),
+      broadcast(param_.waist_at_oven_exit));
+  }
+
+  // 
+  // Beam intensity at current position
+  //
+  __forceinline __m256d __vectorcall beamIntensity(
+    QuadrupleAVX_3D const& pos) const
+  {
+    __m256d rad_sq =
+      multiply_add(pos[X], pos[X],
+          multiply(pos[Y], pos[Y]));
+
+    __m256d waist = beamWaist(pos[Z]);
+
+    __m256d waist_sq_inv = reciprocal(multiply(waist, waist));
+
+    __m256d peak_intensity =
+      multiply(waist_sq_inv, broadcast(2.0*param_.laser_power_watt / pi));
+
+    __m256d twice_ratio_squared =
+      multiply(
+        broadcast(2.0),
+        multiply(rad_sq, waist_sq_inv));
+
+    QuadrupleScalar trsq;
+    store(twice_ratio_squared, trsq);
+
+    QuadrupleScalar exped;
+    for_every_quadruple_member(i)
+    {
+      exped[i] = std::exp(-trsq[i]);
+    }
+
+    return multiply(load(exped), peak_intensity);
+  }
+
+  //
+  // Computes beam direction. It is assumed that the
+  // beam converges towards a point on the slower axis. 
+  // The function returns normalized direction.
+  //
+  __forceinline void __vectorcall beamDirection(
+    QuadrupleAVX_3D const& pos,
+    QuadrupleAVX_3D& dir_normalized) const
+  {
+    // focus point
+    QuadrupleAVX_3D foc;
+    foc[X] = _mm256_setzero_pd();
+    foc[Y] = _mm256_setzero_pd();
+    foc[Z] = broadcast(param_.focus_point_z);
+
+    QuadrupleAVX_3D dirs;
+    for_every_direction(d)
+      dirs[d] = subtract(foc[d], pos[d]);
+
+    __m256d norm_squared = dotProduct(dirs, dirs);
+
+    __m256d norm_inv = reciprocal(squareRoot(norm_squared));
+
+    for_every_direction(d)
+    {
+      dir_normalized[d] = multiply(dirs[d], norm_inv);
+    }
+  }
+};
+
+// **************************************************************
+//
+//          Initial velocities and positions of particles
+//
+// **************************************************************
+//
 //
 // InitialStates struct provides us with initial positions and velocities of 
 // particles. The positions are randomly drawn from uniform distribution of points 
@@ -64,7 +177,12 @@ struct SimulationParam
 //
 struct InitialStates
 {
-  using Vecd = Vec3D<double>;
+  typedef double vec3d[NDir];
+  struct Particle
+  {
+    vec3d pos_;
+    vec3d vel_;
+  };
   
   template<class RandGen_t>
   
@@ -74,51 +192,56 @@ struct InitialStates
     using Uniform = std::uniform_real_distribution<double>;
     
     Uniform phi(0.0, two_pi);
-    Uniform cos_theta_initvel(cos(beam_spread_angle_rad_), 1.0);
+    Uniform cos_theta_initvel(cos(param.beam_spread_angle_rad), 1.0);
     Uniform zero_to_one(0.0, 1.0);
 
     size_t num = param.number_of_particles;
 
-    positions_.reserve(num);
-    velocities_.reserve(num);
+    initial_states_.reserve(num);
+
     for (size_t i = 0; i < num; ++i)
     {
       double vel_magnitude = init_velocity(rand_gen);
 
-      Vecd vel_init = to_cartesian(phi(rand_gen), cos_theta_initvel(rand_gen))*vel_magnitude;
+      auto& s = initial_states_.emplace_back();
+
+      computeCartesian(phi(rand_gen), cos_theta_initvel(rand_gen), s.vel_);
+      
+      for_every_direction(dir)
+        s.vel_[dir] *= vel_magnitude;
 
       double angle = phi(rand_gen);
       double two_rand_sum = zero_to_one(rand_gen) + zero_to_one(rand_gen);
       double r = two_rand_sum > 1 ? 2.0 - two_rand_sum : two_rand_sum;
-      double rad = r * param.oven_exit_radius_m;
+      double rad = r * param.initial_atomic_beam_radius_m;
 
-      Vecd pos_init = Vecd(rad*cos(angle), rad*sin(angle), -0.2); // TODO: remove hardcoded initial position
-
-      positions_.push_back(pos_init);
-      velocities_.push_back(vel_init);
+      s.pos_[X] = rad * cos(angle);
+      s.pos_[Y] = rad * sin(angle);
+      s.pos_[Z] = param.simulation_start_z_m; 
     }
 
     // Sort according to Z component of velocity
     // (the reason for this is explained in struct description)
-    std::vector<std::size_t> per(num);
-    std::iota(per.begin(), per.end(), 0);
-    std::sort(per.begin(), per.end(),
-      [this](std::size_t i, std::size_t j) 
-      { return this->velocities_[i].z_ < this->velocities_[j].z_; });
-
-    std::vector<Vecd> sorted(num);
-    for (int i = 0; i < num; ++i) sorted[i] = velocities_[per[i]];
-    velocities_ = sorted;
-
-    for (int i = 0; i < num; ++i) sorted[i] = positions_[per[i]];
-    positions_ = sorted;
+    std::sort(
+      initial_states_.begin(), 
+      initial_states_.end(),
+      [this](auto const& particle, auto const& other) 
+      { return particle.vel_[Z] < other.vel_[Z]; });
 
     taken_ = 0;
   }
 
+  // works OK for 0 < theta < pi
+  void computeCartesian(double phi, double cos_theta, vec3d& dst) const
+  {
+    using namespace std;
+    dst[X] = cos(phi)*sqrt(1.0 - sq(cos_theta));
+    dst[Y] = sin(phi)*sqrt(1.0 - sq(cos_theta));
+    dst[Z] = cos_theta;
+  }
+
   int taken_;
-  std::vector<Vecd> positions_;
-  std::vector<Vecd> velocities_;
+  std::vector<Particle> initial_states_;
 };
 
 //
@@ -128,9 +251,16 @@ struct InitialStates
 //
 struct ParticleQuadruple
 {
-  Quadruple pos[NDir];
-  Quadruple vel[NDir];
+  QuadrupleScalar3D pos;
+  QuadrupleScalar3D vel;
 };
+
+
+// **************************************************************
+//
+//          Monte Carlo simulation
+//
+// **************************************************************
 
 //
 // Move one step forward in time. In this function, the
@@ -152,18 +282,19 @@ static void takeOneStep(
   RandomGen_t& rand_gen,
   ZeemanSlower const& slower,
   ImportedField const& quadrupole_coil, 
+  LaserBeam const& laser,
   SimulationParam const& param)
 { 
   // Current position and velocity
 
-  __m256d curr_pos[NDir];
-  __m256d curr_vel[NDir];
-  forall_directions(dir)
+  QuadrupleAVX_3D curr_pos;
+  QuadrupleAVX_3D curr_vel;
+  for_every_direction(dir)
   {
     curr_pos[dir] = load(atoms.pos[dir]);
     curr_vel[dir] = load(atoms.vel[dir]);
   }
-  __m256d intensity = laser::beamIntensity(curr_pos);
+  __m256d intensity = laser.beamIntensity(curr_pos);
 
   // TODO: combine both fields before simulation starts
   __m256d field_slower = interpolate(slower, curr_pos);
@@ -171,7 +302,7 @@ static void takeOneStep(
   __m256d field_tesla = add(field_slower, field_quad);
  
   __m256d light_dir[NDir];
-  laser::beamDirection(curr_pos, light_dir);
+  laser.beamDirection(curr_pos, light_dir);
 
   __m256d vel_along_light_dir = dotProduct(curr_vel, light_dir);
   
@@ -180,7 +311,7 @@ static void takeOneStep(
 
   __m256d time_step = broadcast(param.time_step_s);
 
-  forall_directions(dir)
+  for_every_direction(dir)
   {
     __m256d new_pos = multiply_add(curr_vel[dir], time_step, curr_pos[dir]);
     store(new_pos, atoms.pos[dir]);
@@ -198,15 +329,15 @@ static void takeOneStep(
 
   if(mmask)
   { 
-    Quadruple cos_phi = { 0, 0, 0, 0 };
-    Quadruple sin_phi = { 0, 0, 0, 0 };
+    QuadrupleScalar cos_phi = { 0, 0, 0, 0 };
+    QuadrupleScalar sin_phi = { 0, 0, 0, 0 };
     
     __m256d planar = rand_gen.random_simd(0.0, two_pi);
     __m256d cos_polar = rand_gen.random_simd(-1.0, 1.0);
-    Quadruple phi;
+    QuadrupleScalar phi;
     store(planar, phi);
 
-    for (int i = 0; i < 4; ++i)
+    for_every_quadruple_member(i)
     {
       bool scatter_occurs = (mmask & (1 << i));
       if (scatter_occurs)
@@ -222,7 +353,7 @@ static void takeOneStep(
     __m256d sin_polar_sq = _mm256_fnmadd_pd(cos_polar, cos_polar, broadcast(1.0));
     __m256d sin_polar = squareRoot(sin_polar_sq);
 
-    __m256d change_dir[NDir];
+    QuadrupleAVX_3D change_dir;
     change_dir[X] = _mm256_fnmadd_pd(cos_planar, sin_polar, light_dir[X]);
     change_dir[Y] = _mm256_fnmadd_pd(sin_planar, sin_polar, light_dir[Y]);
     change_dir[Z] = subtract(light_dir[Z], cos_polar);
@@ -232,7 +363,7 @@ static void takeOneStep(
         broadcast(recoil_velocity),
         comparison);
 
-    forall_directions(dir)
+    for_every_direction(dir)
     {
       __m256d new_vel = multiply_add(change_dir[dir], vel_recoil, curr_vel[dir]);
       store(new_vel, atoms.vel[dir]);
@@ -244,6 +375,7 @@ template<class RanGen_t, class StopCondition>
 void simulateQuadruplePath(RanGen_t& rand_gen,
   ZeemanSlower const& slower,
   ImportedField const& quadrupole,
+  LaserBeam const& laser,
   SimulationParam const& param,
   InitialStates& init_states,
   std::array<Histogram, 4>& hists,
@@ -253,20 +385,17 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
 
   // Pop initial states and convert them
   // into packed particle quadruple representation.
-  for (int i = 0; i < 4; ++i)
+  for_every_quadruple_member(i)
   {
     int& ix = init_states.taken_;
 
-    auto pos = init_states.positions_[ix];
-    auto vel = init_states.velocities_[ix];
+    auto const& s = init_states.initial_states_[ix];
 
-    atoms.pos[X][i] = pos.x_;
-    atoms.pos[Y][i] = pos.y_;
-    atoms.pos[Z][i] = pos.z_;
-
-    atoms.vel[X][i] = vel.x_;
-    atoms.vel[Y][i] = vel.y_;
-    atoms.vel[Z][i] = vel.z_;
+    for_every_direction(dir)
+    {
+      atoms.pos[dir][i] = s.pos_[dir];
+      atoms.vel[dir][i] = s.vel_[dir];
+    }
 
     init_states.taken_++;
   }
@@ -274,14 +403,14 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
   for(;;)
   {
     int at_end = 0;
-    for (int i = 0; i < 4; ++i)
+    for_every_quadruple_member(i)
     {
       hists[i].addSample(atoms.pos[Z][i], atoms.vel[Z][i]);
       at_end += (int)stop_condition(atoms, i);
     }
     if (at_end == 4) break;
 
-    takeOneStep(atoms, rand_gen, slower, quadrupole, param);
+    takeOneStep(atoms, rand_gen, slower, quadrupole, laser, param);
   }
 }
 
@@ -289,7 +418,8 @@ void simulateQuadruplePath(RanGen_t& rand_gen,
 void simulationSingleThreaded(
   XoroshiroSIMD rand_gen, 
   ZeemanSlower slower, 
-  ImportedField quadrupole, 
+  ImportedField quadrupole,
+  LaserBeam const& laser,
   SimulationParam param,
   Histogram* dst)
 {
@@ -312,7 +442,8 @@ void simulationSingleThreaded(
     simulateQuadruplePath(
       rand_gen, 
       slower, quadrupole, 
-      param, init_states, 
+      laser, param, 
+      init_states, 
       hists, stop_condition);
 
     for (auto const& h : hists)
@@ -388,9 +519,10 @@ void simulation(SimulationParam const& param)
   // TODO: create outside this function
   ZeemanSlower slower(0, 0, -0.3, 1.0, 2000);
   ImportedField quadrupole(0.0, "ideal.txt");
-  
+  LaserBeam laser(param.laser_beam_param_);
+
   // Parameters for single simulation instance
-  // ("st" ----> "single thread")
+  // ("st" as in "single thread")
   SimulationParam param_st = param;
   param_st.number_of_particles /= param.number_of_threads;
   param_st.number_of_threads = 1;
@@ -405,7 +537,8 @@ void simulation(SimulationParam const& param)
         simulationSingleThreaded, 
         generators[i], 
         slower, 
-        quadrupole, 
+        quadrupole,
+        laser,
         param_st,
         &hists[i]));
   }

@@ -45,12 +45,7 @@ static constexpr double recoil_velocity = transition_wave_vec * planck_reduced /
 //
 __forceinline __m256d dopplerEffect(__m256d const& velocities)
 {
-  return _mm256_mul_pd(velocities, _mm256_set1_pd(transition_wave_vec));
-}
-
-__forceinline double dopplerEffect(double velocity_in_light_direction)
-{
-  return transition_wave_vec * velocity_in_light_direction;
+  return multiply(velocities, broadcast(transition_wave_vec));
 }
 
 //
@@ -60,12 +55,7 @@ static constexpr double zeeman_slope = g_factor * bohr_magneton / planck_reduced
 
 __forceinline __m256d __vectorcall zeemanEffect(__m256d const& magnetic_fields)
 {
-  return _mm256_mul_pd(_mm256_set1_pd(zeeman_slope), magnetic_fields);
-}
-
-__forceinline double zeemanEffect(double magField)
-{
-  return zeeman_slope * magField;
+  return multiply(broadcast(zeeman_slope), magnetic_fields);
 }
 
 //
@@ -74,23 +64,17 @@ __forceinline double zeemanEffect(double magField)
 //
 __forceinline __m256d __vectorcall excitedStateProbabilites(__m256d const& intensities, __m256d const& detunings)
 {
-  __m256d s = _mm256_mul_pd(intensities, _mm256_set1_pd(saturation_intensity_inv));
-  __m256d num = _mm256_mul_pd(_mm256_set1_pd(0.5), s);
+  __m256d s = multiply(intensities, broadcast(saturation_intensity_inv));
+  __m256d num = multiply(broadcast(0.5), s);
 
-  __m256d twice_lifetime = _mm256_set1_pd(2.0*excited_state_lifetime);
-  __m256d prod = _mm256_mul_pd(twice_lifetime, detunings);
+  __m256d twice_lifetime = broadcast(2.0*excited_state_lifetime);
+  __m256d prod = multiply(twice_lifetime, detunings);
   
-  __m256d prod_sq_plus_s = _mm256_fmadd_pd(prod, prod, s);
+  __m256d prod_sq_plus_s = multiply_add(prod, prod, s);
 
-  __m256d den = _mm256_add_pd(prod_sq_plus_s, _mm256_set1_pd(1.0));
+  __m256d den = add(prod_sq_plus_s, broadcast(1.0));
 
   return _mm256_div_pd(num, den);
-}
-
-__forceinline double excitedStateProbability(double light_intensity, double light_detuning_hz)
-{
-  double s = light_intensity * saturation_intensity_inv;
-  return 0.5*s / (1.0 + s + sq(2.0 * light_detuning_hz * excited_state_lifetime));
 }
 
 //
@@ -102,57 +86,20 @@ __forceinline __m256d scatteringRate(__m256d const& intensities, __m256d const& 
   return _mm256_mul_pd(probs, _mm256_set1_pd(natural_linewidth_hz));
 }
 
-__forceinline double scatteringRate(double light_intensity, double light_detuning_angular_hz)
-{
-  return natural_linewidth_hz * excitedStateProbability(light_intensity, light_detuning_angular_hz);
-}
 
-//
-// Conversion from frequency to angular frequency
-//
-__forceinline __m256d __vectorcall frequency_to_angular_freq(__m256d const& freq)
-{
-  return _mm256_mul_pd(freq, _mm256_set1_pd(two_pi));
-}
-
-__forceinline double frequency_to_angular_freq(double freq)
-{
-  return two_pi * freq;
-}
-
-__forceinline __m256d __vectorcall sub(__m256d const& a, __m256d const& b)
-{
-  return _mm256_sub_pd(a, b);
-}
-
-__forceinline double sub(double a, double b)
-{
-  return a + b;
-}
-
-__forceinline __m256d __vectorcall add(__m256d const& a, __m256d const& b)
-{
-  return _mm256_add_pd(a, b);
-}
-
-__forceinline double add(double a, double b)
-{
-  return a + b;
-}
-
-template<typename T>
-__forceinline T __vectorcall scatteringRate(
-  T const& velocity_component_along_light_direction,
-  T const& light_intensity,
-  T const& light_detuning_hz,
-  T const& magnetic_field_tesla)
+__forceinline __m256d __vectorcall scatteringRate(
+  __m256d const& velocity_component_along_light_direction,
+  __m256d const& light_intensity,
+  __m256d const& light_detuning_hz,
+  __m256d const& magnetic_field_tesla)
 {
   // shifts (angular frequencies)
-  T shift_doppler = dopplerEffect(velocity_component_along_light_direction);
-  T shift_zeeman = zeemanEffect(magnetic_field_tesla);
-  T shift_detuning = frequency_to_angular_freq(light_detuning_hz);
+  __m256d shift_doppler = dopplerEffect(velocity_component_along_light_direction);
+  __m256d shift_zeeman = zeemanEffect(magnetic_field_tesla);
+  // Convert detuning to angular frequency
+  __m256d shift_detuning = multiply(light_detuning_hz, broadcast(two_pi));
 
-  T total_detuning = sub(add(shift_zeeman, shift_doppler), shift_detuning);
+  __m256d total_detuning = subtract(add(shift_zeeman, shift_doppler), shift_detuning);
 
   return scatteringRate(light_intensity, total_detuning);
 }
