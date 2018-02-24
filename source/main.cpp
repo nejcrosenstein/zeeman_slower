@@ -620,7 +620,7 @@ void simulation(SimulationParam const& param)
   joinAndClearThreads(threads);
 
   std::ofstream out;
-  out.open("out.txt");
+  out.open("histogram.txt");
 
   size_t size_vel = hists[0].bins_vel_.number_of_bins_;
   size_t size_pos = hists[0].bins_pos_.number_of_bins_;
@@ -643,6 +643,25 @@ void simulation(SimulationParam const& param)
 
   out.close();
 
+  std::ofstream vel_axis;
+  vel_axis.open("histogram_axis_vel.txt");
+
+  auto const& hv = hists[0].bins_vel_;
+  for (size_t i = 0; i < size_vel; ++i)
+  {
+    vel_axis << hv.lowest_start_ + double(i)*hv.bin_width_ << " ";
+  }
+  vel_axis.close();
+  
+  std::ofstream pos_axis;
+  pos_axis.open("histogram_axis_pos.txt");
+
+  auto const& hp = hists[0].bins_pos_;
+  for (size_t i = 0; i < size_pos; ++i)
+  {
+    pos_axis << hp.lowest_start_ + double(i)*hp.bin_width_ << " ";
+  }
+  pos_axis.close();
 
   std::ofstream export_fieldshape;
   export_fieldshape.open("fieldshape.txt");
