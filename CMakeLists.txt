@@ -11,7 +11,6 @@ set(HEADER_FILES
     ${PROJECT_SOURCE_DIR}/source/mathtools.hpp 
     ${PROJECT_SOURCE_DIR}/source/physics.hpp
     ${PROJECT_SOURCE_DIR}/source/coils.hpp
-    ${PROJECT_SOURCE_DIR}/source/beam.hpp
-    ${PROJECT_SOURCE_DIR}/source/histogram.hpp)
+    ${PROJECT_SOURCE_DIR}/source/beam.hpp)
 
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${HEADER_FILES})

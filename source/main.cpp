@@ -10,7 +10,6 @@
 #include "physics.hpp"
 #include "coils.hpp"
 #include "beam.hpp"
-#include "histogram.hpp"
 
 #include "../externals/randgen/xoroshiro128plus.hpp"
 
@@ -29,6 +28,18 @@ struct SimulationParam
 
   } laser_beam_param_;
   
+  struct HistogramParam
+  {
+    double vel_lowest = -50.0;
+    double vel_binwidth = 1.0;
+    int vel_nbins = 500;
+      
+    double pos_lowest = -0.2; 
+    double pos_binwidth = 0.001;
+    int pos_nbins = 1000;
+
+  } histogram_param_;
+
   
   // Oven temperature
   double oven_temperature_kelvin = 353.0;
@@ -54,6 +65,66 @@ struct SimulationParam
 
   // Number of threads
   size_t number_of_threads = 4;
+};
+
+// **************************************************************
+//
+//          Histogram 
+//
+// **************************************************************
+
+struct Histogram
+{
+  using Param_t = SimulationParam::HistogramParam;
+
+  Histogram() {}
+
+  Histogram(Param_t const& p) : 
+    bins_vel_({ p.vel_lowest, p.vel_binwidth, p.vel_nbins }),
+    bins_pos_({ p.pos_lowest, p.pos_binwidth, p.pos_nbins }),
+    histogram_(std::vector<int>(p.vel_nbins*p.pos_nbins, 0))
+  {}
+
+  void addSample(double sample_pos, double sample_vel)
+  {
+    auto pos_and_vel_idx = std::make_pair(
+      bins_pos_.binIndex(sample_pos),
+      bins_vel_.binIndex(sample_vel));
+
+    if (!current_pos_and_vel_bin_ ||
+      *current_pos_and_vel_bin_ != pos_and_vel_idx)
+    {
+      current_pos_and_vel_bin_ = pos_and_vel_idx;
+
+      int pos_idx = pos_and_vel_idx.first;
+      int vel_idx = pos_and_vel_idx.second;
+
+      if (pos_idx >= 0 && pos_idx < bins_pos_.number_of_bins_ &&
+        vel_idx >= 0 && vel_idx < bins_vel_.number_of_bins_)
+      {
+        histogram_[vel_idx*bins_pos_.number_of_bins_ + pos_idx] += 1;
+      }
+    }
+  }
+
+  struct Bins
+  {
+    double lowest_start_;
+    double bin_width_;
+    int number_of_bins_;
+
+    // can be out of bounds
+    int binIndex(double value)
+    {
+      return int((value - lowest_start_) / bin_width_);
+    }
+  };
+
+  Bins bins_vel_;
+  Bins bins_pos_;
+  std::optional<std::pair<int, int>> current_pos_and_vel_bin_;
+  std::optional<int> current_vel_bin_;
+  std::vector<int> histogram_;
 };
 
 // **************************************************************
@@ -379,7 +450,7 @@ void simulationSingleThreaded(
 
   InitialStates init_states(init_velocity_dist, param, rand_gen);
 
-  Histogram hist(-50.5, 1.0, 499.5, -0.2, 0.001, 1000);
+  Histogram hist(param.histogram_param_);
 
   std::array<Histogram, 4> hists = { hist, hist, hist, hist };
 
