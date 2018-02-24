@@ -281,7 +281,7 @@ struct InitialStates
       initial_states_.begin(), 
       initial_states_.end(),
       [this](auto const& particle, auto const& other) 
-      { return particle.vel_[Z] < other.vel_[Z]; });
+      { return particle.vel_[Z] > other.vel_[Z]; });
   }
 
 
@@ -491,7 +491,9 @@ void simulationSingleThreaded(
 
       if (finished)
       {
-        --num_remaining;
+        --num_remaining; 
+        // TODO: number of particles is determined by number of supplied initial states.
+        // Use the latter number to determine number of particles.
 
         auto const& s = init_states.pop_state();
 
