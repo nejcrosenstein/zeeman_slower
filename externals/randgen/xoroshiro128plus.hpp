@@ -123,12 +123,18 @@ void jump(void) {
 #endif
 
 
-// **************************************************************
+// ******************************************************************
 //
-//      SIMD version of algorithm by Blackman and Vigna
+//      My own SIMD implementation of xoroshiro128+ PRNG algorithm
 //
-// **************************************************************
+// ******************************************************************
 
+//
+// Do not compile if the processor hasn't got AVX2 instruction sets
+//
+#ifndef __AVX2__
+static_assert(0);
+#endif
 
 
 struct XoroshiroSIMD
