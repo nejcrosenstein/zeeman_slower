@@ -139,10 +139,17 @@ static_assert(0);
 
 struct XoroshiroSIMD
 {
+  
+  // Seed must not be zero
   XoroshiroSIMD(uint64_t(&seed)[2]) :
     min_(uint64_t(0)),
     max_(~uint64_t(0))
   {
+    if (seed[0] == 0 || seed[1] == 0)
+    {
+      std::exception("Xoroshiro seed must not equal zero.");
+    }
+    
     uint64_t curr_state0 = seed[0];
     uint64_t curr_state1 = seed[1];
 
@@ -156,14 +163,9 @@ struct XoroshiroSIMD
       jump(curr_state0, curr_state1);
     }
     
-    state_[0] = _mm256_load_si256((__m256i*)&states0[0]);
-    state_[1] = _mm256_load_si256((__m256i*)&states1[0]);
+    state_[0] = _mm256_load_si256((__m256i*)states0);
+    state_[1] = _mm256_load_si256((__m256i*)states1);
     
-    if (seed[0] == 0 || seed[1] == 0)
-    {
-      std::exception("Xoroshiro seed must not equal zero.");
-    }
-
     norm_inv_ = 1.0 / (double(max_) - double(min_));
   }
 
