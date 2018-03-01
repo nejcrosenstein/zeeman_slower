@@ -383,17 +383,14 @@ static void takeOneStep(
     store(new_pos, atoms.pos[dir]);
   }
 
-  // scatter event probability
-  __m256d probs = _mm256_mul_pd(scatter_rates, time_step);
+  // Scatter event happens if 
+  //   scatter event probability > random probability
+  __m256d prob_diff = 
+    _mm256_fnmadd_pd(scatter_rates, time_step, rand_gen.random_simd());
 
-  // number drawn from uniform distribution between 0 and 1
-  __m256d uniform = rand_gen.random_simd();
+  int signs = _mm256_movemask_pd(prob_diff);
 
-  __m256d comparison = _mm256_cmp_pd(uniform, probs, _CMP_LE_OQ);
-
-  int mmask = _mm256_movemask_pd(comparison);
-
-  if(mmask)
+  if(signs)
   { 
     QuadrupleScalar cos_phi = { 0, 0, 0, 0 };
     QuadrupleScalar sin_phi = { 0, 0, 0, 0 };
@@ -405,7 +402,7 @@ static void takeOneStep(
 
     for_every_quadruple_member(i)
     {
-      bool scatter_occurs = (mmask & (1 << i));
+      bool scatter_occurs = (signs & (1 << i));
       if (scatter_occurs)
       {
         cos_phi[i] = cos(phi[i]);
@@ -424,10 +421,10 @@ static void takeOneStep(
     change_dir[Y] = _mm256_fnmadd_pd(sin_planar, sin_polar, light_dir[Y]);
     change_dir[Z] = subtract(light_dir[Z], cos_polar);
 
-    __m256d vel_recoil =
+    __m256d vel_recoil = 
       _mm256_and_pd(
         broadcast(recoil_velocity),
-        comparison);
+        _mm256_cmp_pd(prob_diff, _mm256_setzero_pd(), _CMP_LT_OQ));
 
     for_every_direction(dir)
     {
