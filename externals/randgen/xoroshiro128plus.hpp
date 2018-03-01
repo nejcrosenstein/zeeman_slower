@@ -1,5 +1,49 @@
+/*
+    This file contains two implementations of pseudo-random number 
+    generator algorithm xoroshiro128+ that was originally eveloped 
+    by David Blackman and Sebastiano Vigna. 
+
+    http://xoroshiro.di.unimi.it/
+
+    This header file is structured as follows. The first part contains 
+    the algorithm published by the authors on the above mentioned web 
+    page. This includes the license notice and the implementation of the 
+    algorithm in the C language. The source file for this implementation 
+    is available here:
+
+    http://xoroshiro.di.unimi.it/xoroshiro128plus.c
+
+    The second part contains my own SIMD implementation of xoroshiro128+ 
+    algorithm in C++ language. SIMD (Same Instruction Multiple Data) approach 
+    allows us to generate four pseudo-random numbers at once with AVX instructions. 
+    
+    The implementation is wrapped in the class that maintains four states. 
+    This de-facto means that each instance of the class contains four PNRG 
+    generators, yet they all produce a random number simultaneously every time
+    the algorithm is executed. See the class documentation to learn more about 
+    how the seeding is handled, etc.
+
+    Except for SIMD paralellism, this version of algorithm deviates in no way 
+    from the xoroshiro128+ algorithm by Blackman and Vigna (see the license notice below).
+
+    Nejc Rosenstein, 2018
+
+*/
+
+
 #ifndef XOROSHIRO_128_PLUS_HPP
 #define XOROSHIRO_128_PLUS_HPP
+
+// **************************************************************
+//
+//      Original implementation by Blackman and Vigna
+//
+//      source: http://xoroshiro.di.unimi.it/xoroshiro128plus.c
+//
+// **************************************************************
+
+
+#if 0
 
 /*  Written in 2016 by David Blackman and Sebastiano Vigna (vigna@acm.org)
 
@@ -10,7 +54,6 @@ worldwide. This software is distributed without any warranty.
 See <http://creativecommons.org/publicdomain/zero/1.0/>. */
 
 #include <stdint.h>
-#include <exception>
 
 /* This is the successor to xorshift128+. It is the fastest full-period
 generator passing BigCrush without systematic failures, but due to the
@@ -36,85 +79,56 @@ The state must be seeded so that it is not everywhere zero. If you have
 a 64-bit seed, we suggest to seed a splitmix64 generator and use its
 output to fill s. */
 
+uint64_t s[2];
 
-struct Xoroshiro
-{
-  Xoroshiro(uint64_t (&seed)[2]) :
-    min_(uint64_t(0)),
-    max_(~uint64_t(0))
-  {
-    state_[0] = seed[0];
-    state_[1] = seed[1];
-    if (state_[0] == 0 || state_[1] == 0)
-    {
-      std::exception("Xoroshiro seed must not equal zero.");
+static inline uint64_t rotl(const uint64_t x, int k) {
+  return (x << k) | (x >> (64 - k));
+}
+
+uint64_t next(void) {
+  const uint64_t s0 = s[0];
+  uint64_t s1 = s[1];
+  const uint64_t result = s0 + s1;
+
+  s1 ^= s0;
+  s[0] = rotl(s0, 55) ^ s1 ^ (s1 << 14); // a, b
+  s[1] = rotl(s1, 36); // c
+
+  return result;
+}
+
+
+/* This is the jump function for the generator. It is equivalent
+to 2^64 calls to next(); it can be used to generate 2^64
+non-overlapping subsequences for parallel computations. */
+
+void jump(void) {
+  static const uint64_t JUMP[] = { 0xbeac0467eba5facb, 0xd86b048b86aa9922 };
+
+  uint64_t s0 = 0;
+  uint64_t s1 = 0;
+  for (int i = 0; i < sizeof JUMP / sizeof *JUMP; i++)
+    for (int b = 0; b < 64; b++) {
+      if (JUMP[i] & UINT64_C(1) << b) {
+        s0 ^= s[0];
+        s1 ^= s[1];
+      }
+      next();
     }
 
-    norm_inv_ = 1.0 / (double(max_) - double(min_));
-  }
+  s[0] = s0;
+  s[1] = s1;
+}
 
-  typedef uint64_t result_type;
-
-  uint64_t min() const
-  {
-    return min_;
-  }
-
-  uint64_t max() const
-  {
-    return max_;
-  }
-
-  double random(double lo, double hi)
-  {
-    return lo + double(this->operator()()) * norm_inv_ * (hi - lo);
-  }
-
-  static inline uint64_t rotl(const uint64_t x, int k) {
-    return (x << k) | (x >> (64 - k));
-  }
-
-  uint64_t operator()() {
-    const uint64_t s0 = state_[0];
-    uint64_t s1 = state_[1];
-    const uint64_t result = s0 + s1;
-
-    s1 ^= s0;
-    state_[0] = rotl(s0, 55) ^ s1 ^ (s1 << 14); // a, b
-    state_[1] = rotl(s1, 36); // c
-
-    return result;
-  }
+#endif
 
 
-  /* This is the jump function for the generator. It is equivalent
-  to 2^64 calls to next(); it can be used to generate 2^64
-  non-overlapping subsequences for parallel computations. */
-  void jump(void) {
-    static const uint64_t JUMP[] = { 0xbeac0467eba5facb, 0xd86b048b86aa9922 };
+// **************************************************************
+//
+//      SIMD version of algorithm by Blackman and Vigna
+//
+// **************************************************************
 
-    uint64_t s0 = 0;
-    uint64_t s1 = 0;
-    for (int i = 0; i < sizeof JUMP / sizeof *JUMP; i++)
-      for (int b = 0; b < 64; b++) {
-        if (JUMP[i] & UINT64_C(1) << b) {
-          s0 ^= state_[0];
-          s1 ^= state_[1];
-        }
-        this->operator()();
-      }
-
-    state_[0] = s0;
-    state_[1] = s1;
-  }
-
-private:
-  // State
-  uint64_t state_[2];
-  uint64_t min_;
-  uint64_t max_;
-  double norm_inv_;
-};
 
 
 struct XoroshiroSIMD
