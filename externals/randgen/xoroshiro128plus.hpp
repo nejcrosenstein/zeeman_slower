@@ -171,6 +171,9 @@ struct XoroshiroSIMD
 
   __m256d random_simd(double lo, double hi)
   {
+    // TODO: I could probably also generate 32 bit numbers
+    // (authors reccomend bit shifting to right) and just
+    // avoid all the trouble with conversions
     __m256i irnd = generate_simd();
 
     alignas(32) uint64_t vals[4];
@@ -182,10 +185,10 @@ struct XoroshiroSIMD
 
     __m256d drnd = _mm256_load_pd(cvt);
 
-    return _mm256_add_pd(
-      _mm256_set1_pd(lo),
-      _mm256_mul_pd(drnd,
-        _mm256_set1_pd(norm_inv_*(hi - lo))));
+    double scale = norm_inv_*(hi - lo);
+
+    return _mm256_fmadd_pd(drnd, _mm256_set1_pd(scale), _mm256_set1_pd(lo));
+
   }
 
   __m256d random_simd()
