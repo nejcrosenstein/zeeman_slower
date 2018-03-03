@@ -154,17 +154,17 @@ struct XoroshiroSIMD
       std::exception("Xoroshiro seed must not equal zero.");
     }
     
-    uint64_t curr_state0 = seed[0];
-    uint64_t curr_state1 = seed[1];
+    // TODO: just use std::arrays already to get rid of this ugly copying
+    uint64_t curr_state[2] = {seed[0], seed[1]};
 
     alignas(32) uint64_t states0[4];
     alignas(32) uint64_t states1[4];
     for (int i = 0; i < 4; ++i)
     {
-      states0[i] = curr_state0;
-      states1[i] = curr_state1;
+      states0[i] = curr_state[0];
+      states1[i] = curr_state[1];
 
-      jump(curr_state0, curr_state1);
+      xoroshiro_original::jump(curr_state);
     }
     
     state_[0] = _mm256_load_si256((__m256i*)states0);
@@ -176,7 +176,7 @@ struct XoroshiroSIMD
   __m256d random_simd(double lo, double hi)
   {
     // TODO: I could probably also generate 32 bit numbers
-    // (authors reccomend bit shifting to right) and just
+    // (authors recommend bit shifting to right) and just
     // avoid all the trouble with conversions
     __m256i irnd = generate_simd();
 
@@ -261,7 +261,7 @@ struct XoroshiroSIMD
           rotl<55>(s0), s1),
         _mm256_slli_epi64(s1, 14));
 
-    state_[1] = rotl<36>(s1); // c
+    state_[1] = rotl<36>(s1); 
 
     return result;
   }
