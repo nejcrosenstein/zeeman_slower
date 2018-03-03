@@ -583,7 +583,7 @@ void simulation(SimulationParam const& param)
   std::vector<XoroshiroSIMD> generators;
   for(size_t idx = 0; idx < param.number_of_threads; ++idx)
   {
-    generators.emplace_back(random_gen).jump(4*idx, 1);
+    generators.emplace_back(random_gen).jump(4*idx, 0);
   }
 
   // TODO: create outside this function
