@@ -461,7 +461,8 @@ void simulationSingleThreaded(
   auto stop_condition = [](ParticleQuadruple const& atoms, int idx) 
   {
     return (atoms.pos[Z][idx] > 0.8) || 
-           (atoms.vel[Z][idx] < 0.0);
+           (atoms.vel[Z][idx] < 0.0 && atoms.pos[Z][idx] < -0.2) ||
+           (sq(atoms.pos[X][idx]) + sq(atoms.pos[Y][idx]) > sq(0.005));
   };
 
   ParticleQuadruple atoms;
