@@ -428,10 +428,16 @@ static void takeOneStep(
 
     for_every_direction(dir)
     {
-      __m256d new_vel = multiply_add(change_dir[dir], vel_recoil, curr_vel[dir]);
-      store(new_vel, atoms.vel[dir]);
+      curr_vel[dir] = multiply_add(change_dir[dir], vel_recoil, curr_vel[dir]);
     }
   }
+
+  // Gravity
+  // velocity -= g * delta t
+  curr_vel[Y] = _mm256_fnmadd_pd(broadcast(9.81), time_step, curr_vel[Y]);
+
+  for_every_direction(dir)
+    store(curr_vel[dir], atoms.vel[dir]);
 }
 
 // just pass everything by copy
