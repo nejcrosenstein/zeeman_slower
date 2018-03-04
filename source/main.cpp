@@ -24,7 +24,10 @@ struct SimulationParam
     double oven_exit_pos_z = 0.63 - 0.83 - 0.15;
 
     double focus_point_z = -1.4;
-    double laser_power_watt = 0.01;
+    double laser_power_watt = 0.010;
+
+    // Frequency detuning (*not* angular frequency)
+    double laser_detuning_hz = -8e6; // TODO: use Mhz
 
   } laser_beam_param_;
   
@@ -46,10 +49,7 @@ struct SimulationParam
 
   // Atomic beam properties
   double beam_spread_angle_rad = 0.004;
-  
-  // Frequency detuning (*not* angular frequency)
-  double laser_detuning_hz = 0.0; // TODO: use Mhz
-  double laser_power_watt = 0.005;
+
 
   double focus_point_z = -1.4; // in meters
 
@@ -372,7 +372,7 @@ static void takeOneStep(
 
   __m256d vel_along_light_dir = dotProduct(curr_vel, light_dir);
   
-  __m256d laser_detuning = broadcast(param.laser_detuning_hz);
+  __m256d laser_detuning = broadcast(param.laser_beam_param_.laser_detuning_hz);
   __m256d scatter_rates = scatteringRate(vel_along_light_dir, intensity, laser_detuning, field_tesla);
 
   __m256d time_step = broadcast(param.time_step_s);
